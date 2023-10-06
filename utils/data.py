@@ -8,4 +8,9 @@ def make_path(path: str):
 if __name__ == '__main__':
     path = make_path(os.path.join('RoboTurkPilot', 'bins-Bread', 'demo.hdf5'))
     with h5py.File(path) as f:
-        print(f.values())
+        data = f['data']
+        # print(list(data))
+        group = data['demo_2']
+        for key in group.keys():
+            print(group[key])
+        # print(state[:10])
