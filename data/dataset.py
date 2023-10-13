@@ -3,7 +3,7 @@ import os
 import h5py
 from torch.utils.data import Dataset
 
-from utils.data import make_path
+from utils.data_utils import make_path
 
 
 class GymDataset(Dataset):

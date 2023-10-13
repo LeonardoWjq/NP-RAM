@@ -14,18 +14,9 @@ def read_xml(xml_path: str):
 
 def process_xml(xml_string: str):
     robosuite_path = make_path('robosuite')
-    return re.sub(r'/home/robot/installed_libraries/robosuite',
+    # return re.sub(r'/home/robot/installed_libraries/robosuite',
+    #               robosuite_path,
+    #               xml_string)
+    return re.sub(r'/home/soroushn/code/robosuite-dev',
                   robosuite_path,
                   xml_string)
-
-
-if __name__ == '__main__':
-    xml_path = make_path(
-        'RoboTurkPilot',
-        'bins-Can',
-        'models',
-        'model_1.xml'
-    )
-    xml_string = read_xml(xml_path)
-    xml_string = process_xml(xml_string)
-    print(xml_string)
