@@ -20,3 +20,10 @@ def process_xml(xml_string: str):
     return re.sub(r'/home/soroushn/code/robosuite-dev',
                   robosuite_path,
                   xml_string)
+
+
+def swap_color(obs):
+    group = obs['extra']
+    group['cubeA_pose'][:], group['cubeB_pose'][:] = group['cubeB_pose'][:], group['cubeA_pose'][:]
+    group['tcp_to_cubeA_pos'][:], group['tcp_to_cubeB_pos'][:] = group['tcp_to_cubeB_pos'][:], group['tcp_to_cubeA_pos'][:]
+    group['cubeA_to_cubeB_pos'][:] = group['cubeA_to_cubeB_pos'][:] * -1
