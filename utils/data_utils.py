@@ -1,6 +1,12 @@
 import os
 import re
 
+import clip
+import numpy as np
+import torch
+
+device = "cuda" if torch.cuda.is_available() else "cpu"
+
 
 def make_path(*args):
     return os.path.join(os.getcwd(), *args)
@@ -27,3 +33,27 @@ def swap_color(obs):
     group['cubeA_pose'][:], group['cubeB_pose'][:] = group['cubeB_pose'][:], group['cubeA_pose'][:]
     group['tcp_to_cubeA_pos'][:], group['tcp_to_cubeB_pos'][:] = group['tcp_to_cubeB_pos'][:], group['tcp_to_cubeA_pos'][:]
     group['cubeA_to_cubeB_pos'][:] = group['cubeA_to_cubeB_pos'][:] * -1
+
+
+def encode_stack_cube_instruction(top_color='red', batch=500, seed=42):
+    assert top_color in ['red', 'green']
+
+    np.random.seed(seed)
+
+    if top_color == 'red':
+        file_path = make_path('instructions', 'red_on_green.txt')
+    else:
+        file_path = make_path('instructions', 'green_on_red.txt')
+
+    with open(file_path, 'r') as f:
+        instructions = f.readlines()
+
+    tokens = clip.tokenize(instructions).to(device)
+    model, _ = clip.load("RN50", device=device)
+
+    with torch.no_grad():
+        text_features = model.encode_text(tokens)
+        text_features = text_features.cpu().numpy()
+
+    sample_indices = np.random.choice(len(text_features), batch, replace=True)
+    return text_features[sample_indices]
