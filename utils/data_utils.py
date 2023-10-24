@@ -57,3 +57,28 @@ def encode_stack_cube_instruction(top_color='red', batch=500, seed=42):
 
     sample_indices = np.random.choice(len(text_features), batch, replace=True)
     return text_features[sample_indices]
+
+
+def flatten_obs(obs):
+    agent = obs['agent']
+    extra = obs['extra']
+    return np.concatenate([agent['qpos'],
+                           agent['qvel'],
+                           agent['base_pose'],
+                           extra['tcp_pose'],
+                           extra['cubeA_pose'],
+                           extra['cubeB_pose'],
+                           extra['tcp_to_cubeA_pos'],
+                           extra['tcp_to_cubeB_pos'],
+                           extra['cubeA_to_cubeB_pos']
+                           ], axis=1)
+
+
+if __name__ == '__main__':
+    import h5py
+    h5_path = make_path('datasets', 'train', 'trajectory_state.h5')
+    f = h5py.File(h5_path, 'r')
+    print(f['traj_0']['obs'])
+    print(f['traj_0']['actions'])
+    print(f['traj_0']['instruction'])
+    f.close()
