@@ -161,3 +161,4 @@ cython_debug/
 RoboTurkPilot*
 .vscode
 .DS_Store
+logs/

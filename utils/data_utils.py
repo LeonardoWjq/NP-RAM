@@ -71,7 +71,7 @@ def flatten_obs(obs):
                            extra['tcp_to_cubeA_pos'],
                            extra['tcp_to_cubeB_pos'],
                            extra['cubeA_to_cubeB_pos']
-                           ], axis=1)
+                           ], axis=-1)
 
 
 if __name__ == '__main__':

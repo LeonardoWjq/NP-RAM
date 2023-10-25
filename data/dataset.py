@@ -39,7 +39,7 @@ class StackDataset(Dataset):
         return len(self.obs)
 
     def __getitem__(self, idx: int) -> tuple:
-        return self.instructions[idx], self.obs[idx], self.actions[idx]
+        return self.instructions[idx].astype('float32'), self.obs[idx], self.actions[idx]
 
 
 if __name__ == '__main__':
