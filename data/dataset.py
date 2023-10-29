@@ -4,7 +4,6 @@ import h5py
 import numpy as np
 from torch.utils.data import DataLoader, Dataset
 
-from utils.data_utils import make_path
 
 dir_path = os.path.dirname(__file__)
 data_path = os.path.join(dir_path, '..', 'datasets')
@@ -13,7 +12,6 @@ data_path = os.path.join(dir_path, '..', 'datasets')
 class StackDataset(Dataset):
     def __init__(self, train: bool = True) -> None:
         super().__init__()
-        dir_path = os.path.dirname(__file__)
         if train:
             dataset_path = os.path.join(data_path,
                                         'train',
@@ -50,10 +48,44 @@ class StackDataset(Dataset):
         return self.instructions[idx].astype('float32'), self.obs[idx], self.actions[idx]
 
 
+class StackDatasetOriginal(Dataset):
+    def __init__(self, train: bool = True) -> None:
+        super().__init__()
+        if train:
+            dataset_path = os.path.join(data_path,
+                                        'train',
+                                        'trajectory_state_original.h5')
+        else:
+            dataset_path = os.path.join(data_path,
+                                        'validation',
+                                        'trajectory_state_original.h5')
+
+        self.obs = []
+        self.actions = []
+
+        with h5py.File(dataset_path, 'r') as data:
+            for traj in data.values():
+                obs = traj['obs'][:]
+                actions = traj['actions'][:]
+                self.obs.append(obs)
+                self.actions.append(actions)
+
+        self.obs = np.concatenate(self.obs, axis=0)
+        self.actions = np.concatenate(self.actions, axis=0)
+
+        assert len(self.obs) == len(self.actions)
+
+    def __len__(self) -> int:
+        return len(self.obs)
+
+    def __getitem__(self, idx: int) -> tuple:
+        return self.obs[idx], self.actions[idx]
+
+
 if __name__ == '__main__':
-    dataset = StackDataset(train=True)
+    dataset = StackDatasetOriginal(train=True)
     dataloader = DataLoader(dataset, batch_size=32,
                             shuffle=True, num_workers=4)
-    for ins, obs, actions in dataloader:
-        print(ins.shape, obs.shape, actions.shape)
+    for obs, actions in dataloader:
+        print(obs.shape, actions.shape)
         break
