@@ -1,5 +1,6 @@
 import json
 import os
+import random
 
 import h5py as h5
 import numpy as np
@@ -135,6 +136,57 @@ def generate_train_val(split=0.9, seed=42):
         json.dump(val_trajs, f, indent=4)
 
 
+def generate_train_val_original(split=0.9, seed=42):
+    random.seed(seed)
+
+    original_path = make_path('datasets',
+                              'trajectory_state_original.h5')
+    train_path = make_path('datasets',
+                           'train')
+    val_path = make_path('datasets',
+                         'validation')
+
+    data_fp = h5.File(original_path, 'r')
+    train_fp = h5.File(os.path.join(train_path,
+                                    'trajectory_state_original.h5'), 'w')
+    val_fp = h5.File(os.path.join(val_path,
+                                  'trajectory_state_original.h5'), 'w')
+
+    keys = list(data_fp.keys())
+    random.shuffle(keys)
+    split_point = int(split * len(keys))
+    train_keys = keys[:split_point]
+    val_keys = keys[split_point:]
+
+    print('Creating training set for the original trajectories:')
+    for key in tqdm(train_keys):
+        observations = flatten_obs(data_fp[key]['obs'])
+        actions = data_fp[key]['actions']
+        traj = train_fp.create_group(key)
+        traj.create_dataset('obs', data=observations[:-1])
+        traj.create_dataset('actions', data=actions)
+    print(f'Added {len(train_keys)} trajectories to the training set.)')
+
+    print('Creating validation set for the original trajectories:')
+    for key in tqdm(val_keys):
+        observations = flatten_obs(data_fp[key]['obs'])
+        actions = data_fp[key]['actions']
+        traj = val_fp.create_group(key)
+        traj.create_dataset('obs', data=observations[:-1])
+        traj.create_dataset('actions', data=actions)
+    print(f'Added {len(val_keys)} trajectories to the validation set.)')
+
+    data_fp.close()
+    train_fp.close()
+    val_fp.close()
+
+    with open(os.path.join(train_path, 'trajectory_state_original.json'), 'w') as f:
+        json.dump(train_keys, f, indent=4)
+    with open(os.path.join(val_path, 'trajectory_state_original.json'), 'w') as f:
+        json.dump(val_keys, f, indent=4)
+
+
 if __name__ == '__main__':
-    create_and_split_color()
-    generate_train_val()
+    # create_and_split_color()
+    # generate_train_val()
+    generate_train_val_original()
