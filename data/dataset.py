@@ -1,19 +1,27 @@
+import os
+
 import h5py
 import numpy as np
 from torch.utils.data import DataLoader, Dataset
 
 from utils.data_utils import make_path
 
+dir_path = os.path.dirname(__file__)
+data_path = os.path.join(dir_path, '..', 'datasets')
+
 
 class StackDataset(Dataset):
     def __init__(self, train: bool = True) -> None:
         super().__init__()
+        dir_path = os.path.dirname(__file__)
         if train:
-            dataset_path = make_path(
-                'datasets', 'train', 'trajectory_state.h5')
+            dataset_path = os.path.join(data_path,
+                                        'train',
+                                        'trajectory_state.h5')
         else:
-            dataset_path = make_path(
-                'datasets', 'validation', 'trajectory_state.h5')
+            dataset_path = os.path.join(data_path,
+                                        'validation',
+                                        'trajectory_state.h5')
 
         self.instructions = []
         self.obs = []
@@ -43,7 +51,7 @@ class StackDataset(Dataset):
 
 
 if __name__ == '__main__':
-    dataset = StackDataset()
+    dataset = StackDataset(train=True)
     dataloader = DataLoader(dataset, batch_size=32,
                             shuffle=True, num_workers=4)
     for ins, obs, actions in dataloader:
