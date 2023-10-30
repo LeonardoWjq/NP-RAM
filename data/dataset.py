@@ -81,6 +81,38 @@ class StackDatasetOriginal(Dataset):
     def __getitem__(self, idx: int) -> tuple:
         return self.obs[idx], self.actions[idx]
 
+class StackDatasetOriginalSequential(Dataset):
+    def __init__(self, train: bool = True, seq_len: int = 8) -> None:
+        super().__init__()
+        if train:
+            dataset_path = os.path.join(data_path,
+                                        'train',
+                                        'trajectory_state_original.h5')
+        else:
+            dataset_path = os.path.join(data_path,
+                                        'validation',
+                                        'trajectory_state_original.h5')
+
+        self.obs = []
+        self.actions = []
+
+        with h5py.File(dataset_path, 'r') as data:
+            for traj in data.values():
+                obs = traj['obs'][:]
+                actions = traj['actions'][:]
+                self.obs.append(obs)
+                self.actions.append(actions)
+
+        self.obs = np.concatenate(self.obs, axis=0)
+        self.actions = np.concatenate(self.actions, axis=0)
+
+        assert len(self.obs) == len(self.actions)
+
+    def __len__(self) -> int:
+        return len(self.obs)
+
+    def __getitem__(self, idx: int) -> tuple:
+        return self.obs[idx], self.actions[idx]
 
 if __name__ == '__main__':
     dataset = StackDatasetOriginal(train=True)
