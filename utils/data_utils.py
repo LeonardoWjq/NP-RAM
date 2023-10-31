@@ -31,7 +31,8 @@ def process_xml(xml_string: str):
 def swap_color(obs):
     group = obs['extra']
     group['cubeA_pose'][:], group['cubeB_pose'][:] = group['cubeB_pose'][:], group['cubeA_pose'][:]
-    group['tcp_to_cubeA_pos'][:], group['tcp_to_cubeB_pos'][:] = group['tcp_to_cubeB_pos'][:], group['tcp_to_cubeA_pos'][:]
+    group['tcp_to_cubeA_pos'][:], group['tcp_to_cubeB_pos'][:
+                                                            ] = group['tcp_to_cubeB_pos'][:], group['tcp_to_cubeA_pos'][:]
     group['cubeA_to_cubeB_pos'][:] = group['cubeA_to_cubeB_pos'][:] * -1
 
 
@@ -72,6 +73,15 @@ def flatten_obs(obs):
                            extra['tcp_to_cubeB_pos'],
                            extra['cubeA_to_cubeB_pos']
                            ], axis=-1)
+
+
+def obs_to_sequences(obs: np.array, sequence_len: int) -> np.array:
+    repeated_head = np.repeat(obs[0][None], sequence_len - 1, axis=0)
+    aug_obs = np.concatenate([repeated_head, obs], axis=0)
+    sequences = []
+    for i in range(len(obs)):
+        sequences.append(aug_obs[i:i + sequence_len])
+    return np.array(sequences)
 
 
 if __name__ == '__main__':

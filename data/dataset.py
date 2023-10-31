@@ -3,6 +3,7 @@ import os
 import h5py
 import numpy as np
 from torch.utils.data import DataLoader, Dataset
+from utils.data_utils import obs_to_sequences
 
 
 dir_path = os.path.dirname(__file__)
@@ -81,6 +82,7 @@ class StackDatasetOriginal(Dataset):
     def __getitem__(self, idx: int) -> tuple:
         return self.obs[idx], self.actions[idx]
 
+
 class StackDatasetOriginalSequential(Dataset):
     def __init__(self, train: bool = True, seq_len: int = 8) -> None:
         super().__init__()
@@ -98,9 +100,10 @@ class StackDatasetOriginalSequential(Dataset):
 
         with h5py.File(dataset_path, 'r') as data:
             for traj in data.values():
-                obs = traj['obs'][:]
+                obs = np.array(traj['obs'][:])
+                sequences = obs_to_sequences(obs, seq_len)
                 actions = traj['actions'][:]
-                self.obs.append(obs)
+                self.obs.append(sequences)
                 self.actions.append(actions)
 
         self.obs = np.concatenate(self.obs, axis=0)
@@ -114,10 +117,11 @@ class StackDatasetOriginalSequential(Dataset):
     def __getitem__(self, idx: int) -> tuple:
         return self.obs[idx], self.actions[idx]
 
+
 if __name__ == '__main__':
-    dataset = StackDatasetOriginal(train=True)
+    dataset = StackDatasetOriginalSequential(train=True)
     dataloader = DataLoader(dataset, batch_size=32,
-                            shuffle=True, num_workers=4)
+                            shuffle=True, num_workers=0)
     for obs, actions in dataloader:
         print(obs.shape, actions.shape)
         break
