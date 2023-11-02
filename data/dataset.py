@@ -84,7 +84,7 @@ class StackDatasetOriginal(Dataset):
 
 
 class StackDatasetOriginalSequential(Dataset):
-    def __init__(self, train: bool = True, seq_len: int = 8) -> None:
+    def __init__(self, seq_len: int, train: bool = True) -> None:
         super().__init__()
         if train:
             dataset_path = os.path.join(data_path,
@@ -119,7 +119,7 @@ class StackDatasetOriginalSequential(Dataset):
 
 
 if __name__ == '__main__':
-    dataset = StackDatasetOriginalSequential(train=True)
+    dataset = StackDatasetOriginalSequential(8, train=True)
     dataloader = DataLoader(dataset, batch_size=32,
                             shuffle=True, num_workers=0)
     for obs, actions in dataloader:
