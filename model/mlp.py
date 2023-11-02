@@ -35,7 +35,7 @@ class MLP(nn.Module):
 
         feature = self.combine_fc(ins_and_obs)
 
-        # apply the mean and variance prediction layers
+        # apply mean and variance prediction layers
         mean = self.mean_fc(feature)
         sigma = self.sigma_fc(feature)
 
