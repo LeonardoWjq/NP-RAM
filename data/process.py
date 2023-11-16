@@ -186,6 +186,7 @@ def generate_train_val_original(split=0.9, seed=42):
         json.dump(val_keys, f, indent=4)
 
 
+
 if __name__ == '__main__':
     # create_and_split_color()
     # generate_train_val()
