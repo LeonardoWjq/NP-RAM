@@ -61,6 +61,9 @@ def encode_stack_cube_instruction(top_color='red', batch=500, seed=42):
 
 
 def flatten_obs(obs):
+    '''
+    Note: the order of the observations is important
+    '''
     agent = obs['agent']
     extra = obs['extra']
     return np.concatenate([agent['qpos'],
@@ -75,9 +78,15 @@ def flatten_obs(obs):
                            ], axis=-1)
 
 
-def obs_to_sequences(obs: np.array, sequence_len: int) -> np.array:
-    repeated_head = np.repeat(obs[0][None], sequence_len - 1, axis=0)
-    aug_obs = np.concatenate([repeated_head, obs], axis=0)
+def obs_to_sequences(obs: np.array, sequence_len: int, mode: str = 'zero') -> np.array:
+    assert mode in ['zero', 'repeat'], f'mode {mode} not supported'
+
+    if mode == 'zero':
+        head = np.zeros((sequence_len - 1, *obs[0].shape))
+    else:
+        head = np.repeat(obs[0][None], sequence_len - 1, axis=0)
+
+    aug_obs = np.concatenate([head, obs], axis=0)
     sequences = []
     for i in range(len(obs)):
         sequences.append(aug_obs[i:i + sequence_len])
