@@ -15,17 +15,15 @@ from gymnasium.spaces import Box
 from imitation.algorithms.adversarial.gail import GAIL
 from imitation.data.types import Trajectory
 from imitation.data.wrappers import RolloutInfoWrapper
-from imitation.rewards.reward_nets import BasicRewardNet
+from imitation.rewards.reward_nets import (BasicRewardNet, NormalizedRewardNet,
+                                           RewardNet)
 from imitation.util.logger import configure
 from imitation.util.networks import RunningNorm
 from imitation.util.util import make_vec_env
-from imitation.util.video_wrapper import VideoWrapper
-from mani_skill2.utils.wrappers import RecordEpisode
 from stable_baselines3 import PPO
 from stable_baselines3.common.evaluation import evaluate_policy
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
-from stable_baselines3.common.vec_env import (DummyVecEnv, SubprocVecEnv,
-                                              VecFrameStack, VecVideoRecorder)
+from stable_baselines3.common.vec_env import VecFrameStack, VecVideoRecorder
 from stable_baselines3.common.vec_env.base_vec_env import VecEnv
 from stable_baselines3.ppo import MlpPolicy
 from torch.nn import (Flatten, Linear, TransformerEncoder,
@@ -156,6 +154,99 @@ class TransformerExtractor(BaseFeaturesExtractor):
         return self.relu(feature)
 
 
+class TransformerRewardNet(RewardNet):
+    def __init__(self,
+                 observation_space,
+                 action_space,
+                 seq_len: int,
+                 obs_dim: int = 55,
+                 features_dim: int = 256,
+                 dropout: float = 0.1,
+                 d_model: int = 64,
+                 dim_ff: int = 64,
+                 num_heads: int = 8,
+                 num_layers: int = 3):
+
+        super().__init__(observation_space,
+                         action_space,
+                         normalize_images=False)
+
+        self.d_model = d_model
+        self.seq_len = seq_len
+        self.obs_dim = obs_dim
+        self.act_dim = action_space.shape[0]
+
+        self.state_embedding = Linear(in_features=obs_dim,
+                                      out_features=d_model)
+
+        self.act_embedding = Linear(in_features=self.act_dim,
+                                    out_features=d_model)
+
+        self.done_embedding = Linear(in_features=1,
+                                     out_features=d_model)
+
+        self.pos_encoder = PositionalEncoding(d_model=d_model,
+                                              dropout=dropout)
+
+        encoder_layer = TransformerEncoderLayer(d_model=d_model,
+                                                nhead=num_heads,
+                                                dim_feedforward=dim_ff,
+                                                dropout=dropout,
+                                                batch_first=True)  # define one layer of encoder multi-head attention
+
+        self.encoder = TransformerEncoder(encoder_layer=encoder_layer,
+                                          num_layers=num_layers)  # chain multiple layers of encoder multi-head attention
+
+        self.flatten = Flatten(start_dim=1,
+                               end_dim=-1)
+
+        self.linear = Linear(in_features=d_model*seq_len*4,
+                             out_features=features_dim)
+
+        self.relu = nn.ReLU()
+
+        self.output = Linear(in_features=features_dim,
+                             out_features=1)
+
+    def forward(self,
+                state: torch.Tensor,  # (batch_size, *obs_shape)
+                action: torch.Tensor,  # (batch_size, *action_shape)
+                next_state: torch.Tensor,  # (batch_size, *obs_shape)
+                done: torch.Tensor,  # (batch_size,)
+                ) -> torch.Tensor:
+        state = torch.reshape(state,
+                              (-1, self.seq_len, self.obs_dim))
+
+        next_state = torch.reshape(next_state,
+                                   (-1, self.seq_len, self.obs_dim))
+
+        done = torch.reshape(done, (-1, 1))
+
+        state_embedding: torch.tensor = self.state_embedding(state)
+
+        next_state_embedding: torch.tensor = self.state_embedding(next_state)
+
+        act_embedding: torch.tensor = self.act_embedding(action)
+        act_embedding: torch.tensor = act_embedding.repeat(1, self.seq_len)
+        act_embedding: torch.tensor = torch.reshape(act_embedding,
+                                                    (-1, self.seq_len, self.d_model))
+        done_embedding: torch.tensor = self.done_embedding(done)
+        done_embedding: torch.tensor = done_embedding.repeat(1, self.seq_len)
+        done_embedding: torch.tensor = torch.reshape(done_embedding,
+                                                     (-1, self.seq_len, self.d_model))
+
+        concat_embedding = torch.concat(
+            (state_embedding, act_embedding, next_state_embedding, done_embedding), dim=1)
+        embedding = self.pos_encoder(concat_embedding)*math.sqrt(self.d_model)
+
+        feature = self.encoder(embedding)
+        feature = self.flatten(feature)
+        feature = self.linear(feature)
+        feature = self.relu(feature)
+
+        return self.output(feature).squeeze(-1)
+
+
 def prep_trajectory(data_path: str, seq_len: int, mode: str) -> List[Trajectory]:
     assert mode in ['zero', 'repeat'], f'mode {mode} not supported'
 
@@ -165,6 +256,7 @@ def prep_trajectory(data_path: str, seq_len: int, mode: str) -> List[Trajectory]
             traj = f[key]
             obs = flatten_obs(traj['obs'])
             sequences = obs_to_sequences(obs, seq_len)
+            sequences = np.reshape(sequences, (sequences.shape[0], -1))
             acts = np.array(traj['actions'])
             traj = Trajectory(sequences, acts, infos=None, terminal=True)
             traj_list.append(traj)
@@ -216,7 +308,7 @@ def record_video(agent: PPO,
 if __name__ == '__main__':
     SEED = 42
     SEQ_LEN = 8
-    N_ENVS = 8
+    N_ENVS = 4
     trajectories = prep_trajectory(data_path, seq_len=SEQ_LEN, mode='zero')
 
     venv = make_vec_env(
@@ -251,12 +343,12 @@ if __name__ == '__main__':
         policy_kwargs=policy_kwargs,
         verbose=1
     )
+    reward_net = TransformerRewardNet(observation_space=sequence_env.observation_space,
+                                      action_space=sequence_env.action_space,
+                                      seq_len=SEQ_LEN)
 
-    reward_net = BasicRewardNet(
-        observation_space=sequence_env.observation_space,
-        action_space=sequence_env.action_space,
-        normalize_input_layer=RunningNorm
-    )
+    reward_net = NormalizedRewardNet(reward_net,
+                                     normalize_output_layer=RunningNorm)
 
     gail_trainer = GAIL(
         demonstrations=trajectories,
@@ -274,36 +366,22 @@ if __name__ == '__main__':
     )
 
     ckpts = 10
-    step_per_ckpt = 20_000
+    step_per_ckpt = 200_000
     for ckpt in tqdm(range(1, ckpts+1)):
-        learner.learn(total_timesteps=step_per_ckpt)
-        learner.save(os.path.join(ckpt_path, f'PPO_StackCube_{ckpt*step_per_ckpt}'))
+        gail_trainer.train(n_epochs=step_per_ckpt)
+
+        learner.save(os.path.join(ckpt_path,
+                                  f'PPO_Agent_{ckpt*step_per_ckpt}'))
+
+        torch.save(reward_net,
+                   os.path.join(ckpt_path, f'Reward_Net_{ckpt*step_per_ckpt}'))
+
         record_video(agent=learner,
-                    seq_len=SEQ_LEN,
-                    seed=SEED,
-                    num_envs=4,
-                    max_length=400,
-                    suffix=str(ckpt*step_per_ckpt)
-                    )
+                     seq_len=SEQ_LEN,
+                     seed=SEED,
+                     num_envs=4,
+                     max_length=400,
+                     suffix=str(ckpt*step_per_ckpt)
+                     )
 
     sequence_env.close()
-
-    # env = gym.make('StackCube-v0',
-    #                render_mode="cameras",
-    #                enable_shadow=True,
-    #                obs_mode="state",
-    #                control_mode="pd_joint_delta_pos",
-    #                max_episode_steps=250)
-
-    # render_env = VideoWrapper(env=env,
-    #                           directory=Path(os.path.join(log_path, 'video')),
-    #                           single_video=True)
-    # obs, info = render_env.reset()
-    # buffer = init_deque(obs, seq_len=SEQ_LEN, mode='zero')
-    # sequence = np.array(buffer).reshape(1, -1)
-    # terminated, truncated = False, False
-    # while not terminated and not truncated:
-    #     action, info = learner.predict(sequence)
-    #     obs, reward, terminated, truncated, info = render_env.step(action[0])
-    #     sequence = update_deque(obs, buffer).reshape(1, -1)
-    # render_env.close()
