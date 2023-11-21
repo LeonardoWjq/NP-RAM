@@ -20,7 +20,7 @@ from imitation.rewards.reward_nets import (BasicRewardNet, NormalizedRewardNet,
 from imitation.util.logger import configure
 from imitation.util.networks import RunningNorm
 from imitation.util.util import make_vec_env
-from stable_baselines3 import PPO
+from stable_baselines3 import PPO, SAC
 from stable_baselines3.common.evaluation import evaluate_policy
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
 from stable_baselines3.common.vec_env import VecFrameStack, VecVideoRecorder
@@ -113,7 +113,7 @@ class TransformerExtractor(BaseFeaturesExtractor):
                  d_model: int = 128,
                  dim_ff: int = 128,
                  num_heads: int = 8,
-                 num_layers: int = 3):
+                 num_layers: int = 4):
         super().__init__(observation_space, features_dim)
 
         self.d_model = d_model
@@ -162,14 +162,14 @@ class TransformerRewardNet(RewardNet):
                  obs_dim: int = 55,
                  features_dim: int = 256,
                  dropout: float = 0.1,
-                 d_model: int = 64,
-                 dim_ff: int = 64,
+                 d_model: int = 128,
+                 dim_ff: int = 128,
                  num_heads: int = 8,
-                 num_layers: int = 3):
+                 num_layers: int = 4):
 
         super().__init__(observation_space,
                          action_space,
-                         normalize_images=False)
+                         normalize_images=True)
 
         self.d_model = d_model
         self.seq_len = seq_len
@@ -200,7 +200,7 @@ class TransformerRewardNet(RewardNet):
         self.flatten = Flatten(start_dim=1,
                                end_dim=-1)
 
-        self.linear = Linear(in_features=d_model*seq_len*4,
+        self.linear = Linear(in_features=d_model*(seq_len+1),
                              out_features=features_dim)
 
         self.relu = nn.ReLU()
@@ -214,29 +214,16 @@ class TransformerRewardNet(RewardNet):
                 next_state: torch.Tensor,  # (batch_size, *obs_shape)
                 done: torch.Tensor,  # (batch_size,)
                 ) -> torch.Tensor:
+        
         state = torch.reshape(state,
                               (-1, self.seq_len, self.obs_dim))
 
-        next_state = torch.reshape(next_state,
-                                   (-1, self.seq_len, self.obs_dim))
-
-        done = torch.reshape(done, (-1, 1))
-
         state_embedding: torch.tensor = self.state_embedding(state)
 
-        next_state_embedding: torch.tensor = self.state_embedding(next_state)
+        act_embedding: torch.tensor = self.act_embedding(action).unsqueeze(1)
 
-        act_embedding: torch.tensor = self.act_embedding(action)
-        act_embedding: torch.tensor = act_embedding.repeat(1, self.seq_len)
-        act_embedding: torch.tensor = torch.reshape(act_embedding,
-                                                    (-1, self.seq_len, self.d_model))
-        done_embedding: torch.tensor = self.done_embedding(done)
-        done_embedding: torch.tensor = done_embedding.repeat(1, self.seq_len)
-        done_embedding: torch.tensor = torch.reshape(done_embedding,
-                                                     (-1, self.seq_len, self.d_model))
-
-        concat_embedding = torch.concat(
-            (state_embedding, act_embedding, next_state_embedding, done_embedding), dim=1)
+        concat_embedding = torch.concat((state_embedding, act_embedding), dim=1)
+        
         embedding = self.pos_encoder(concat_embedding)*math.sqrt(self.d_model)
 
         feature = self.encoder(embedding)
@@ -270,7 +257,8 @@ def record_video(agent: PPO,
                  num_envs: int = 1,
                  max_length: int = 300,
                  suffix=''):
-
+    
+    agent.policy.eval()
     if suffix:
         prefix = f'PPO_StackCube_{suffix}'
     else:
@@ -303,12 +291,13 @@ def record_video(agent: PPO,
         obs, reward, done, info = rec_env.step(action)
 
     rec_env.close()
+    agent.policy.train()
 
 
 if __name__ == '__main__':
     SEED = 42
     SEQ_LEN = 8
-    N_ENVS = 4
+    N_ENVS = 6
     trajectories = prep_trajectory(data_path, seq_len=SEQ_LEN, mode='zero')
 
     venv = make_vec_env(
@@ -317,7 +306,7 @@ if __name__ == '__main__':
         parallel=False,
         n_envs=N_ENVS,
         log_dir=log_path,
-        max_episode_steps=250,
+        max_episode_steps=300,
         post_wrappers=[lambda env, _: RolloutInfoWrapper(env)],
         env_make_kwargs=dict(obs_mode='state',
                              control_mode='pd_joint_delta_pos',
@@ -333,9 +322,9 @@ if __name__ == '__main__':
     learner = PPO(
         env=sequence_env,
         policy=MlpPolicy,
-        batch_size=64,
-        ent_coef=1e-7,
-        learning_rate=0.0004,
+        batch_size=128,
+        ent_coef=0.0,
+        learning_rate=0.001,
         gamma=0.95,
         n_epochs=5,
         seed=SEED,
@@ -343,6 +332,7 @@ if __name__ == '__main__':
         policy_kwargs=policy_kwargs,
         verbose=1
     )
+
     reward_net = TransformerRewardNet(observation_space=sequence_env.observation_space,
                                       action_space=sequence_env.action_space,
                                       seq_len=SEQ_LEN)
@@ -364,11 +354,10 @@ if __name__ == '__main__':
         init_tensorboard_graph=True,
         custom_logger=configure(log_path, ('tensorboard', 'stdout', 'csv'))
     )
-
     ckpts = 10
-    step_per_ckpt = 200_000
+    step_per_ckpt = 300_000
     for ckpt in tqdm(range(1, ckpts+1)):
-        gail_trainer.train(n_epochs=step_per_ckpt)
+        gail_trainer.train(total_timesteps=step_per_ckpt)
 
         learner.save(os.path.join(ckpt_path,
                                   f'PPO_Agent_{ckpt*step_per_ckpt}'))
