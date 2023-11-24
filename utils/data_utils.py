@@ -114,7 +114,19 @@ def rescale_rgbd(rgbd: np.array, scale_rgb_only: bool = False):
     if not scale_rgb_only:
         depth_base = rgbd[..., 3:4] / (2**10)
         depth_hand = rgbd[..., 7:8] / (2**10)
-    return np.concatenate([rgb_base, depth_base, rgb_hand, depth_hand], axis=-1)
+    return np.concatenate([rgb_base, depth_base, rgb_hand, depth_hand], axis=-1, dtype=np.float32)
+
+
+def flatten_state(obs: h5.Group):
+    agent = obs['agent']
+    extra = obs['extra']
+    flattened_obs = []
+    for key, value in agent.items():
+        flattened_obs.append(np.array(value, dtype=np.float32))
+    for key, value in extra.items():
+        flattened_obs.append(np.array(value, dtype=np.float32))
+
+    return np.hstack(flattened_obs)
 
 
 if __name__ == '__main__':

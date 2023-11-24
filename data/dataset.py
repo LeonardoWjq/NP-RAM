@@ -6,7 +6,8 @@ import torch
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 
-from utils.data_utils import obs_to_sequences, process_image, rescale_rgbd
+from utils.data_utils import (flatten_state, obs_to_sequences, process_image,
+                              rescale_rgbd)
 
 dir_path = os.path.dirname(__file__)
 data_path = os.path.join(dir_path, '..', 'datasets')
@@ -121,42 +122,36 @@ class StackDatasetOriginalSequential(Dataset):
 
 
 class PickCubeDataset(Dataset):
-    def __init__(self, load_count: int = 998) -> None:
+    def __init__(self,
+                 data_path: str,
+                 load_count: int = 998) -> None:
         assert 0 < load_count <= 998
         super().__init__()
-        data_path = os.path.join(dir_path,
-                                 '..',
-                                 'demonstrations',
-                                 'v0',
-                                 'rigid_body',
-                                 'PickCube-v0',
-                                 )
 
         self.states = []
         self.rgbds = []
         self.actions = []
+
         with h5.File(os.path.join(data_path, 'rgbd.h5'), 'r') as data:
             keys = list(data.keys())
-        
-        load_keys = keys[:load_count]
 
-        with h5.File(os.path.join(data_path, 'state.h5'), 'r') as data:
-            for key in tqdm(load_keys):
-                traj = data[key]
-                obs = traj['obs']
-                act = traj['actions']
-                self.states.append(np.array(obs[:-1], dtype=np.float32))
-                self.actions.append(np.array(act, dtype=np.float32))
+        load_keys = keys[:load_count]
 
         with h5.File(os.path.join(data_path, 'rgbd.h5'), 'r') as data:
             for key in tqdm(load_keys):
                 traj = data[key]
                 obs = traj['obs']
+
+                state = flatten_state(obs)
+                self.states.append(state[:-1])
+
+                act = traj['actions']
+                self.actions.append(np.array(act, dtype=np.float32))
+
                 image = obs['image']
                 rgbd = process_image(image)
                 rescaled_rgbd = rescale_rgbd(rgbd)
-                self.rgbds.append(np.array(rescaled_rgbd[:-1],
-                                           dtype=np.float32))
+                self.rgbds.append(rescaled_rgbd[:-1])
 
         self.states = np.vstack(self.states)
         self.rgbds = np.vstack(self.rgbds)
@@ -175,13 +170,18 @@ class PickCubeDataset(Dataset):
 
 
 if __name__ == '__main__':
-    PickCubeDataset(load_count=1)
     from torch.utils.data import DataLoader
-    dataset = PickCubeDataset(load_count=5)
+    data_path = os.path.join(dir_path,
+                             '..',
+                             'demonstrations',
+                             'v0',
+                             'rigid_body',
+                             'PickCube-v0',
+                             )
+    dataset = PickCubeDataset(data_path, load_count=5)
     dataloader = DataLoader(dataset, batch_size=32)
     for state, rgbd, action in dataloader:
         print(state.shape)
         print(rgbd.shape)
         print(action.shape)
         break
-
