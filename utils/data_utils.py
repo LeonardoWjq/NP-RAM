@@ -2,6 +2,7 @@ import os
 import re
 
 import clip
+import h5py as h5
 import numpy as np
 import torch
 
@@ -91,6 +92,29 @@ def obs_to_sequences(obs: np.array, sequence_len: int, mode: str = 'zero') -> np
     for i in range(len(obs)):
         sequences.append(aug_obs[i:i + sequence_len])
     return np.array(sequences)
+
+
+def process_image(image: h5.Group):
+    rgb_base = image["base_camera"]["rgb"]
+    depth_base = image["base_camera"]["depth"]
+    rgb_hand = image["hand_camera"]["rgb"]
+    depth_hand = image["hand_camera"]["depth"]
+
+    rgbd = np.concatenate([rgb_base, depth_base, rgb_hand, depth_hand],
+                          axis=-1)
+    return rgbd
+
+
+def rescale_rgbd(rgbd: np.array, scale_rgb_only: bool = False):
+    # rescales rgbd data
+    rgb_base = rgbd[..., 0:3] / 255.0
+    rgb_hand = rgbd[..., 4:7] / 255.0
+    depth_base = rgbd[..., 3:4]
+    depth_hand = rgbd[..., 7:8]
+    if not scale_rgb_only:
+        depth_base = rgbd[..., 3:4] / (2**10)
+        depth_hand = rgbd[..., 7:8] / (2**10)
+    return np.concatenate([rgb_base, depth_base, rgb_hand, depth_hand], axis=-1)
 
 
 if __name__ == '__main__':

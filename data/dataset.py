@@ -1,10 +1,12 @@
 import os
 
-import h5py
+import h5py as h5
 import numpy as np
+import torch
 from torch.utils.data import DataLoader, Dataset
-from utils.data_utils import obs_to_sequences
+from tqdm import tqdm
 
+from utils.data_utils import obs_to_sequences, process_image, rescale_rgbd
 
 dir_path = os.path.dirname(__file__)
 data_path = os.path.join(dir_path, '..', 'datasets')
@@ -26,7 +28,7 @@ class StackDataset(Dataset):
         self.obs = []
         self.actions = []
 
-        with h5py.File(dataset_path, 'r') as data:
+        with h5.File(dataset_path, 'r') as data:
             for traj in data.values():
                 obs = traj['obs'][:]
                 actions = traj['actions'][:]
@@ -64,7 +66,7 @@ class StackDatasetOriginal(Dataset):
         self.obs = []
         self.actions = []
 
-        with h5py.File(dataset_path, 'r') as data:
+        with h5.File(dataset_path, 'r') as data:
             for traj in data.values():
                 obs = traj['obs'][:]
                 actions = traj['actions'][:]
@@ -98,7 +100,7 @@ class StackDatasetOriginalSequential(Dataset):
         self.obs = []
         self.actions = []
 
-        with h5py.File(dataset_path, 'r') as data:
+        with h5.File(dataset_path, 'r') as data:
             for traj in data.values():
                 obs = np.array(traj['obs'][:])
                 sequences = obs_to_sequences(obs, seq_len)
@@ -118,20 +120,68 @@ class StackDatasetOriginalSequential(Dataset):
         return self.obs[idx], self.actions[idx]
 
 
+class PickCubeDataset(Dataset):
+    def __init__(self, load_count: int = 998) -> None:
+        assert 0 < load_count <= 998
+        super().__init__()
+        data_path = os.path.join(dir_path,
+                                 '..',
+                                 'demonstrations',
+                                 'v0',
+                                 'rigid_body',
+                                 'PickCube-v0',
+                                 )
+
+        self.states = []
+        self.rgbds = []
+        self.actions = []
+        with h5.File(os.path.join(data_path, 'rgbd.h5'), 'r') as data:
+            keys = list(data.keys())
+        
+        load_keys = keys[:load_count]
+
+        with h5.File(os.path.join(data_path, 'state.h5'), 'r') as data:
+            for key in tqdm(load_keys):
+                traj = data[key]
+                obs = traj['obs']
+                act = traj['actions']
+                self.states.append(np.array(obs[:-1], dtype=np.float32))
+                self.actions.append(np.array(act, dtype=np.float32))
+
+        with h5.File(os.path.join(data_path, 'rgbd.h5'), 'r') as data:
+            for key in tqdm(load_keys):
+                traj = data[key]
+                obs = traj['obs']
+                image = obs['image']
+                rgbd = process_image(image)
+                rescaled_rgbd = rescale_rgbd(rgbd)
+                self.rgbds.append(np.array(rescaled_rgbd[:-1],
+                                           dtype=np.float32))
+
+        self.states = np.vstack(self.states)
+        self.rgbds = np.vstack(self.rgbds)
+        self.actions = np.vstack(self.actions)
+
+        assert len(self.states) == len(self.rgbds) == len(self.actions)
+
+    def __len__(self) -> int:
+        return len(self.states)
+
+    def __getitem__(self, idx: int) -> tuple:
+        state = torch.from_numpy(self.states[idx])
+        rgbd = torch.from_numpy(self.rgbds[idx])
+        action = torch.from_numpy(self.actions[idx])
+        return state, rgbd, action
+
+
 if __name__ == '__main__':
-    dataset_path = os.path.join('.',
-                                'demonstrations',
-                                'v0',
-                                'rigid_body',
-                                'PickCube-v0',
-                                'rgbd.h5')
-    
-    with h5py.File(dataset_path, 'r') as data:
-        for traj in data.values():
-            image = traj['obs']['image']
-            base = image['base_camera']
-            hand = image['hand_camera']
-            for key in['rgb', 'depth']:
-                print(key)
-                print(base[key].shape, hand[key].shape)
-            break
+    PickCubeDataset(load_count=1)
+    from torch.utils.data import DataLoader
+    dataset = PickCubeDataset(load_count=5)
+    dataloader = DataLoader(dataset, batch_size=32)
+    for state, rgbd, action in dataloader:
+        print(state.shape)
+        print(rgbd.shape)
+        print(action.shape)
+        break
+
