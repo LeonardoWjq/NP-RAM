@@ -297,7 +297,7 @@ def record_video(agent: PPO,
 if __name__ == '__main__':
     SEED = 42
     SEQ_LEN = 8
-    N_ENVS = 6
+    N_ENVS = 1
     trajectories = prep_trajectory(data_path, seq_len=SEQ_LEN, mode='zero')
 
     venv = make_vec_env(
@@ -342,7 +342,7 @@ if __name__ == '__main__':
 
     gail_trainer = GAIL(
         demonstrations=trajectories,
-        demo_batch_size=512,
+        demo_batch_size=1024,
         gen_replay_buffer_capacity=1024,
         n_disc_updates_per_round=8,
         venv=sequence_env,
@@ -355,7 +355,7 @@ if __name__ == '__main__':
         custom_logger=configure(log_path, ('tensorboard', 'stdout', 'csv'))
     )
     ckpts = 10
-    step_per_ckpt = 300_000
+    step_per_ckpt = 500_000
     for ckpt in tqdm(range(1, ckpts+1)):
         gail_trainer.train(total_timesteps=step_per_ckpt)
 

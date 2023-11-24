@@ -163,3 +163,4 @@ RoboTurkPilot*
 .DS_Store
 logs/
 checkpoints/
+demonstrations/

@@ -119,27 +119,19 @@ class StackDatasetOriginalSequential(Dataset):
 
 
 if __name__ == '__main__':
-    # dataset = StackDatasetOriginalSequential(8, train=True)
-    # dataloader = DataLoader(dataset, batch_size=32,
-    #                         shuffle=True, num_workers=0)
-    # for obs, actions in dataloader:
-    #     print(obs.shape, actions.shape)
-    #     break
-    dataset_path = os.path.join(data_path,'train',
-                                        'trajectory_state_original.h5')
+    dataset_path = os.path.join('.',
+                                'demonstrations',
+                                'v0',
+                                'rigid_body',
+                                'PickCube-v0',
+                                'rgbd.h5')
+    
     with h5py.File(dataset_path, 'r') as data:
         for traj in data.values():
-            print(traj.keys())
-            print(traj['obs'].shape)
-            print(traj['actions'].shape)
+            image = traj['obs']['image']
+            base = image['base_camera']
+            hand = image['hand_camera']
+            for key in['rgb', 'depth']:
+                print(key)
+                print(base[key].shape, hand[key].shape)
             break
-    #         obs = np.array(traj['obs'][:])
-    #         sequences = obs_to_sequences(obs, seq_len)
-    #         actions = traj['actions'][:]
-    #         self.obs.append(sequences)
-    #         self.actions.append(actions)
-
-    # with h5py.File(dataset_path, 'r') as data:
-    #     #print(data.keys())
-    #     print(data.values())
-    #     print(data['traj_0'].keys())
