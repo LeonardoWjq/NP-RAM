@@ -19,7 +19,7 @@ from data.dataset import ManiskillDataset
 from utils.data_utils import (flatten_state, make_path, process_image,
                               rescale_rgbd)
 
-ENV_ID = 'LiftCube-v0'
+ENV_ID = 'PickCube-v0'
 OBS_MODE = 'rgbd'
 CONTROL_MODE = 'pd_ee_delta_pose'
 
@@ -33,10 +33,12 @@ data_path = make_path('demonstrations',
 log_path = make_path('logs', f'{ENV_ID}-{OBS_MODE}-{CONTROL_MODE}')
 ckpt_path = os.path.join(log_path, 'checkpoints')
 tb_path = os.path.join(log_path, 'tensorboard')
+video_path = os.path.join(log_path, 'videos')
 
 Path(log_path).mkdir(exist_ok=True, parents=True)
 Path(ckpt_path).mkdir(exist_ok=True, parents=True)
 Path(tb_path).mkdir(exist_ok=True, parents=True)
+Path(video_path).mkdir(exist_ok=True, parents=True)
 
 device = torch.device('cuda:2' if torch.cuda.is_available() else 'cpu')
 
@@ -331,7 +333,7 @@ def render_video(ckpt: str,
 
     env = RecordEpisode(
         env,
-        log_path,
+        video_path,
         info_on_video=True,
         save_trajectory=False
     )
@@ -366,7 +368,7 @@ def render_video(ckpt: str,
 
 
 if __name__ == '__main__':
-    OBS_DIM = 32
+    OBS_DIM = 35
     ACT_DIM = 7
     MAX_STEPS = 300
     NUM_EPISODES = 100
@@ -382,7 +384,7 @@ if __name__ == '__main__':
                  ckpt_freq=2,
                  start_epoch=0)
 
-    # ckpt = os.path.join(ckpt_path, 'ckpt_100.pt')
+    # ckpt = os.path.join(ckpt_path, 'ckpt_92.pt')
 
     success_seeds = test(ckpt,
                          obs_dim=OBS_DIM,
