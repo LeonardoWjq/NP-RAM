@@ -1,5 +1,6 @@
 import os
 import re
+from collections import OrderedDict
 
 import clip
 import h5py as h5
@@ -117,16 +118,18 @@ def rescale_rgbd(rgbd: np.array, scale_rgb_only: bool = False):
     return np.concatenate([rgb_base, depth_base, rgb_hand, depth_hand], axis=-1, dtype=np.float32)
 
 
-def flatten_state(obs: h5.Group):
-    agent = obs['agent']
-    extra = obs['extra']
-    flattened_obs = []
-    for key, value in agent.items():
-        flattened_obs.append(np.array(value, dtype=np.float32))
-    for key, value in extra.items():
-        flattened_obs.append(np.array(value, dtype=np.float32))
-
-    return np.hstack(flattened_obs)
+def flatten_state(obs):
+    if isinstance(obs, h5.Dataset):
+        return np.array(obs, dtype=np.float32)
+    elif isinstance(obs, np.ndarray):
+        return obs.astype(np.float32)
+    elif isinstance(obs, h5.Group) or isinstance(obs, OrderedDict):
+        ls = []
+        for key, value in obs.items():
+            ls.append(flatten_state(value))
+        return np.hstack(ls)
+    else:
+        raise ValueError(f'obs is of type {type(obs)}')
 
 
 if __name__ == '__main__':
