@@ -121,28 +121,30 @@ class StackDatasetOriginalSequential(Dataset):
         return self.obs[idx], self.actions[idx]
 
 
-class PickCubeDataset(Dataset):
+class ManiskillDataset(Dataset):
     def __init__(self,
                  data_path: str,
-                 load_count: int = 998) -> None:
-        assert 0 < load_count <= 998
+                 load_count: int = None) -> None:
         super().__init__()
 
         self.states = []
         self.rgbds = []
         self.actions = []
 
-        with h5.File(os.path.join(data_path, 'rgbd.h5'), 'r') as data:
-            keys = list(data.keys())
+        with h5.File(data_path, 'r') as data:
+            self.keys = list(data.keys())
 
-        load_keys = keys[:load_count]
+        if load_count is not None:
+            load_keys = self.keys[:load_count]
+        else:
+            load_keys = self.keys
 
-        with h5.File(os.path.join(data_path, 'rgbd.h5'), 'r') as data:
+        with h5.File(data_path, 'r') as data:
             for key in tqdm(load_keys):
                 traj = data[key]
                 obs = traj['obs']
 
-                state = flatten_state(obs)
+                state = np.hstack([flatten_state(obs['agent']), flatten_state(obs['extra'])])
                 self.states.append(state[:-1])
 
                 act = traj['actions']
@@ -176,9 +178,11 @@ if __name__ == '__main__':
                              'demonstrations',
                              'v0',
                              'rigid_body',
-                             'PickCube-v0',
+                             'LiftCube-v0',
+                             'trajectory.rgbd.pd_ee_delta_pose.h5'
                              )
-    dataset = PickCubeDataset(data_path, load_count=5)
+    dataset = ManiskillDataset(data_path, load_count=1)
+    print(len(dataset.keys))
     dataloader = DataLoader(dataset, batch_size=32)
     for state, rgbd, action in dataloader:
         print(state.shape)
