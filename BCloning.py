@@ -16,10 +16,12 @@ from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
 from data.dataset import ManiskillDataset
+from model.resnet import ResNetFeatureExtractor, BaseFeatureExtractor
+from model.mlp import MLP
 from utils.data_utils import (flatten_state, make_path, process_image,
                               rescale_rgbd)
 
-ENV_ID = 'PickCube-v0'
+ENV_ID = 'LiftCube-v0'
 OBS_MODE = 'rgbd'
 CONTROL_MODE = 'pd_ee_delta_pose'
 
@@ -40,119 +42,26 @@ Path(ckpt_path).mkdir(exist_ok=True, parents=True)
 Path(tb_path).mkdir(exist_ok=True, parents=True)
 Path(video_path).mkdir(exist_ok=True, parents=True)
 
-device = torch.device('cuda:2' if torch.cuda.is_available() else 'cpu')
-
-
-class ResBlock(nn.Module):
-    def __init__(self,
-                 channel: int,
-                 kernel_size: int,
-                 stride: int,
-                 ) -> None:
-        super().__init__()
-        self.conv1 = nn.Conv2d(channel, channel,
-                               kernel_size, stride=stride, padding='same')
-        self.conv2 = nn.Conv2d(channel, channel,
-                               kernel_size, stride=stride, padding='same')
-        self.bn = nn.BatchNorm2d(channel)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        feature = self.conv1(x)
-        feature = F.mish(feature)
-        feature = self.bn(feature)
-        feature = self.conv2(x)
-        return x + feature
-
-
-class ResNet(nn.Module):
-    def __init__(self,
-                 in_channels: int,
-                 mid_channels: int,
-                 out_channels: int,
-                 num_blocks: int = 3,
-                 kernel_size: int = 3,
-                 stride: int = 1,
-                 ) -> None:
-        super().__init__()
-        self.in_conv = nn.Conv2d(in_channels, mid_channels,
-                                 kernel_size=kernel_size, stride=stride,
-                                 padding='same')
-
-        self.in_pooling = nn.MaxPool2d(kernel_size=2, stride=2)
-
-        blocks = []
-
-        for _ in range(num_blocks):
-            blocks.append(ResBlock(mid_channels, kernel_size, stride))
-            blocks.append(nn.Mish())
-            blocks.append(nn.BatchNorm2d(mid_channels))
-
-        self.res_blocks = nn.Sequential(*blocks)
-
-        self.out_conv = nn.Conv2d(mid_channels, out_channels,
-                                  kernel_size=kernel_size, stride=stride,
-                                  padding='same')
-
-        self.out_pooling = nn.MaxPool2d(kernel_size=2, stride=2)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = x.permute(0, 3, 1, 2)
-
-        x = self.in_conv(x)
-        x = F.mish(x)
-        x = self.in_pooling(x)
-
-        x = self.res_blocks(x)
-
-        x = self.out_conv(x)
-        x = F.mish(x)
-        x = self.out_pooling(x)
-
-        return torch.flatten(x, start_dim=1)
+gpu_id = 'cuda:2'
+device = torch.device(gpu_id if torch.cuda.is_available() else 'cpu')
 
 
 class Policy(nn.Module):
-    def __init__(self,
-                 obs_dim: int,
-                 act_dim: int,
-                 in_channels: int = 8,
-                 mid_channels: int = 16,
-                 out_channels: int = 8
-                 ) -> None:
+    def __init__(self, feature_extractor: nn.Module, mlp: nn.Module) -> None:
         super().__init__()
-        self.resnet = ResNet(in_channels, mid_channels, out_channels)
-        self.image_linear = nn.Linear(32*32*out_channels, 256)
-        self.state_linear = nn.Linear(obs_dim, 64)
+        self.feature_extractor = feature_extractor
+        self.mlp = mlp
 
-        self.mlp = nn.Sequential(
-            nn.Linear(64 + 256, 256),
-            nn.Mish(),
-            nn.Linear(256, 256),
-            nn.Mish(),
-            nn.Linear(256, 256),
-            nn.Mish(),
-            nn.Linear(256, act_dim),
-        )
-
-    def forward(self,
-                state: torch.Tensor,
-                image: torch.Tensor) -> torch.Tensor:
-
-        state = self.state_linear(state)
-        state_feature = F.mish(state)
-
-        image = self.resnet(image)
-        image = self.image_linear(image)
-        image_feature = F.mish(image)
-
-        feature = torch.cat([state_feature, image_feature], dim=1)
-        out = self.mlp(feature)
-        return F.tanh(out)
+    def forward(self, state: torch.Tensor, image: torch.Tensor) -> torch.Tensor:
+        feature = self.feature_extractor(state, image)
+        return self.mlp(feature)
 
 
 def train(data_path: str,
-          obs_dim: int,
+          state_dim: int,
           act_dim: int,
+          image_embed_dim: int = 256,
+          state_embed_dim: int = 64,
           load_count: int = None,
           batch_size: int = 64,
           epoch: int = 10,
@@ -179,13 +88,20 @@ def train(data_path: str,
 
         ckpt = os.path.join(ckpt_path, f'ckpt_{start_epoch}.pt')
         ckpt = torch.load(ckpt)
+        feature_extractor = ResNetFeatureExtractor(state_dim=state_dim,
+                                                   image_embedding=image_embed_dim,
+                                                   state_embedding=state_embed_dim)
+        feature_extractor.load_state_dict(ckpt['feature_extractor_state_dict'])
 
-        pol = Policy(obs_dim=obs_dim, act_dim=act_dim)
-        pol.load_state_dict(ckpt['policy_state_dict'])
-        pol.to(device)
-        pol.train()
+        mlp = MLP(feature_dim=image_embed_dim+state_embed_dim,
+                  act_dim=act_dim)
+        mlp.load_state_dict(ckpt['mlp_state_dict'])
 
-        optimizer = optim.RAdam(pol.parameters(),
+        policy = Policy(feature_extractor, mlp)
+        policy.to(device)
+        policy.train()
+
+        optimizer = optim.RAdam(policy.parameters(),
                                 lr=lr,
                                 weight_decay=weight_decay)
         optimizer.load_state_dict(ckpt['optimizer_state_dict'])
@@ -197,17 +113,24 @@ def train(data_path: str,
             best_ckpt = log['best_ckpt']
     else:
         print('Starting from scratch...')
+        feature_extractor = ResNetFeatureExtractor(state_dim=state_dim,
+                                                   image_embedding=image_embed_dim,
+                                                   state_embedding=state_embed_dim)
 
-        pol = Policy(obs_dim=obs_dim, act_dim=act_dim).to(device)
-        pol.train()
+        mlp = MLP(feature_dim=image_embed_dim+state_embed_dim,
+                  act_dim=act_dim)
 
-        optimizer = optim.RAdam(pol.parameters(),
+        policy = Policy(feature_extractor, mlp)
+        policy.to(device)
+        policy.train()
+
+        optimizer = optim.RAdam(policy.parameters(),
                                 lr=lr,
                                 weight_decay=weight_decay)
 
-        dummy_state = torch.zeros((1, obs_dim)).to(device)
+        dummy_state = torch.zeros((1, state_dim)).to(device)
         dummy_image = torch.zeros((1, 128, 128, 8)).to(device)
-        writer.add_graph(pol, (dummy_state, dummy_image))
+        writer.add_graph(policy, (dummy_state, dummy_image))
 
         mean_loss = []
         min_loss = np.inf
@@ -226,7 +149,7 @@ def train(data_path: str,
             action = action.to(device)
 
             optimizer.zero_grad()
-            pred = pol(state, image)
+            pred = policy(state, image)
             loss = criterion(pred, action)
             loss.backward()
             optimizer.step()
@@ -234,7 +157,8 @@ def train(data_path: str,
 
         if epoch % ckpt_freq == 0:
             ckpt = os.path.join(ckpt_path, f'ckpt_{epoch}.pt')
-            torch.save(dict(policy_state_dict=pol.state_dict(),
+            torch.save(dict(feature_extractor_state_dict=feature_extractor.state_dict(),
+                            mlp_state_dict=mlp.state_dict(),
                             optimizer_state_dict=optimizer.state_dict()),
                        ckpt)
             if total_loss < min_loss:
@@ -259,31 +183,42 @@ def train(data_path: str,
 
 
 def test(ckpt: str,
-         obs_dim: int,
+         state_dim: int,
          act_dim: int,
+         image_embed_dim: int = 256,
+         state_embed_dim: int = 64,
          max_steps: int = 250,
          num_episodes: int = 100) -> List[int]:
 
     env = gym.make(id=ENV_ID,
                    obs_mode=OBS_MODE,
                    control_mode=CONTROL_MODE,
-                   max_episode_steps=max_steps)
+                   max_episode_steps=max_steps,
+                   renderer_kwargs = {'device': gpu_id})
 
-    pol = Policy(obs_dim=obs_dim, act_dim=act_dim)
+    feature_extractor = ResNetFeatureExtractor(state_dim=state_dim,
+                                               image_embedding=image_embed_dim,
+                                               state_embedding=state_embed_dim)
+
+    mlp = MLP(feature_dim=image_embed_dim+state_embed_dim,
+              act_dim=act_dim)
+
     ckpt = torch.load(ckpt)
-    pol.load_state_dict(ckpt['policy_state_dict'])
-    pol.to(device)
-    pol.eval()
+    feature_extractor.load_state_dict(ckpt['feature_extractor_state_dict'])
+    mlp.load_state_dict(ckpt['mlp_state_dict'])
+    policy = Policy(feature_extractor, mlp)
+    policy.to(device)
+    policy.eval()
 
     success_seeds = []
     returns = {}
 
-    for seed in tqdm(range(num_episodes)):
-        obs, _ = env.reset(seed=seed)
-        G = 0
-        terminated = False
-        truncated = False
-        with torch.no_grad():
+    with torch.no_grad():
+        for seed in tqdm(range(num_episodes)):
+            obs, _ = env.reset(seed=seed)
+            G = 0
+            terminated = False
+            truncated = False
             while not terminated and not truncated:
                 state = np.hstack([flatten_state(obs['agent']),
                                    flatten_state(obs['extra'])])
@@ -295,15 +230,16 @@ def test(ckpt: str,
                 rgbd = rescale_rgbd(rgbd, scale_rgb_only=True)
                 rgbd = torch.from_numpy(rgbd).unsqueeze(0).to(device)
 
-                action = pol(state, rgbd)
+                action = policy(state, rgbd)
                 action = action.cpu().numpy()
                 obs, reward, terminated, truncated, info = env.step(action[0])
                 G += reward
 
-        if info['success']:
-            success_seeds.append(seed)
+            if info['success']:
+                success_seeds.append(seed)
 
-        returns[seed] = G
+            returns[seed] = G
+
     env.close()
 
     log = dict(returns=returns,
@@ -319,9 +255,11 @@ def test(ckpt: str,
 
 
 def render_video(ckpt: str,
-                 obs_dim: int,
+                 state_dim: int,
                  act_dim: int,
                  seed: int,
+                 image_embed_dim: int = 256,
+                 state_embed_dim: int = 64,
                  max_steps: int = 250) -> None:
 
     env = gym.make(id=ENV_ID,
@@ -329,7 +267,8 @@ def render_video(ckpt: str,
                    enable_shadow=True,
                    obs_mode=OBS_MODE,
                    control_mode=CONTROL_MODE,
-                   max_episode_steps=max_steps)
+                   max_episode_steps=max_steps,
+                   renderer_kwargs = {'device': gpu_id})
 
     env = RecordEpisode(
         env,
@@ -338,11 +277,18 @@ def render_video(ckpt: str,
         save_trajectory=False
     )
 
-    pol = Policy(obs_dim=obs_dim, act_dim=act_dim)
+    feature_extractor = ResNetFeatureExtractor(state_dim=state_dim,
+                                               image_embedding=image_embed_dim,
+                                               state_embedding=state_embed_dim)
+    mlp = MLP(feature_dim=image_embed_dim+state_embed_dim,
+              act_dim=act_dim)
+
     ckpt = torch.load(ckpt)
-    pol.load_state_dict(ckpt['policy_state_dict'])
-    pol.to(device)
-    pol.eval()
+    feature_extractor.load_state_dict(ckpt['feature_extractor_state_dict'])
+    mlp.load_state_dict(ckpt['mlp_state_dict'])
+    policy = Policy(feature_extractor, mlp)
+    policy.to(device)
+    policy.eval()
 
     obs, _ = env.reset(seed=seed)
     terminated = False
@@ -359,7 +305,7 @@ def render_video(ckpt: str,
             rgbd = rescale_rgbd(rgbd, scale_rgb_only=True)
             rgbd = torch.from_numpy(rgbd).unsqueeze(0).to(device)
 
-            action = pol(state, rgbd)
+            action = policy(state, rgbd)
             action = action.cpu().numpy()
             obs, reward, terminated, truncated, info = env.step(action[0])
 
@@ -368,33 +314,85 @@ def render_video(ckpt: str,
 
 
 if __name__ == '__main__':
-    OBS_DIM = 35
+    STATE_DIM = 32
     ACT_DIM = 7
     MAX_STEPS = 300
     NUM_EPISODES = 100
+    # ckpt = train(data_path,
+    #              state_dim=STATE_DIM,
+    #              act_dim=ACT_DIM,
+    #              load_count=None,
+    #              batch_size=128,
+    #              epoch=100,
+    #              lr=1e-3,
+    #              seed=42,
+    #              ckpt_freq=2,
+    #              start_epoch=50)
 
-    ckpt = train(data_path,
-                 obs_dim=OBS_DIM,
-                 act_dim=ACT_DIM,
-                 load_count=None,
-                 batch_size=128,
-                 epoch=100,
-                 lr=1e-3,
-                 seed=42,
-                 ckpt_freq=2,
-                 start_epoch=0)
+    ckpt = os.path.join(ckpt_path, 'ckpt_98.pt')
 
-    # ckpt = os.path.join(ckpt_path, 'ckpt_92.pt')
-
-    success_seeds = test(ckpt,
-                         obs_dim=OBS_DIM,
-                         act_dim=ACT_DIM,
-                         max_steps=MAX_STEPS,
-                         num_episodes=NUM_EPISODES)
+    # success_seeds = test(ckpt,
+    #                      state_dim=STATE_DIM,
+    #                      act_dim=ACT_DIM,
+    #                      max_steps=MAX_STEPS,
+    #                      num_episodes=NUM_EPISODES)
+    
+    success_seeds = [
+        5,
+        6,
+        8,
+        9,
+        13,
+        14,
+        15,
+        17,
+        19,
+        21,
+        22,
+        23,
+        25,
+        27,
+        29,
+        31,
+        32,
+        35,
+        36,
+        37,
+        40,
+        41,
+        42,
+        47,
+        48,
+        49,
+        51,
+        52,
+        53,
+        54,
+        56,
+        57,
+        58,
+        61,
+        62,
+        63,
+        64,
+        66,
+        69,
+        73,
+        75,
+        79,
+        81,
+        83,
+        84,
+        86,
+        90,
+        93,
+        94,
+        97
+    ]
 
     for seed in success_seeds[:5]:
         render_video(ckpt,
-                     obs_dim=OBS_DIM,
+                     state_dim=STATE_DIM,
                      act_dim=ACT_DIM,
                      seed=seed,
                      max_steps=MAX_STEPS)
