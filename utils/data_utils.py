@@ -123,7 +123,7 @@ def flatten_state(obs):
         return np.array(obs, dtype=np.float32)
     elif isinstance(obs, np.ndarray):
         return obs.astype(np.float32)
-    elif isinstance(obs, h5.Group) or isinstance(obs, OrderedDict):
+    elif isinstance(obs, h5.Group) or isinstance(obs, OrderedDict) or isinstance(obs, dict):
         ls = []
         for key, value in obs.items():
             ls.append(flatten_state(value))
