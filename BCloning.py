@@ -32,7 +32,7 @@ data_path = make_path('demonstrations',
                       f'trajectory.{OBS_MODE}.{CONTROL_MODE}.h5'
                       )
 
-log_path = make_path('logs', f'{ENV_ID}-{OBS_MODE}-{CONTROL_MODE}')
+log_path = make_path('logs', f'BC-{ENV_ID}-{OBS_MODE}-{CONTROL_MODE}')
 ckpt_path = os.path.join(log_path, 'checkpoints')
 tb_path = os.path.join(log_path, 'tensorboard')
 video_path = os.path.join(log_path, 'videos')
@@ -318,77 +318,26 @@ if __name__ == '__main__':
     ACT_DIM = 7
     MAX_STEPS = 300
     NUM_EPISODES = 100
-    # ckpt = train(data_path,
-    #              state_dim=STATE_DIM,
-    #              act_dim=ACT_DIM,
-    #              load_count=None,
-    #              batch_size=128,
-    #              epoch=100,
-    #              lr=1e-3,
-    #              seed=42,
-    #              ckpt_freq=2,
-    #              start_epoch=50)
 
-    ckpt = os.path.join(ckpt_path, 'ckpt_98.pt')
+    ckpt = train(data_path,
+                 state_dim=STATE_DIM,
+                 act_dim=ACT_DIM,
+                 load_count=None,
+                 batch_size=128,
+                 epoch=100,
+                 lr=1e-3,
+                 seed=42,
+                 ckpt_freq=2,
+                 start_epoch=0)
 
-    # success_seeds = test(ckpt,
-    #                      state_dim=STATE_DIM,
-    #                      act_dim=ACT_DIM,
-    #                      max_steps=MAX_STEPS,
-    #                      num_episodes=NUM_EPISODES)
+    # ckpt = os.path.join(ckpt_path, 'ckpt_98.pt')
+
+    success_seeds = test(ckpt,
+                         state_dim=STATE_DIM,
+                         act_dim=ACT_DIM,
+                         max_steps=MAX_STEPS,
+                         num_episodes=NUM_EPISODES)
     
-    success_seeds = [
-        5,
-        6,
-        8,
-        9,
-        13,
-        14,
-        15,
-        17,
-        19,
-        21,
-        22,
-        23,
-        25,
-        27,
-        29,
-        31,
-        32,
-        35,
-        36,
-        37,
-        40,
-        41,
-        42,
-        47,
-        48,
-        49,
-        51,
-        52,
-        53,
-        54,
-        56,
-        57,
-        58,
-        61,
-        62,
-        63,
-        64,
-        66,
-        69,
-        73,
-        75,
-        79,
-        81,
-        83,
-        84,
-        86,
-        90,
-        93,
-        94,
-        97
-    ]
 
     for seed in success_seeds[:5]:
         render_video(ckpt,
