@@ -144,7 +144,8 @@ class ManiskillDataset(Dataset):
                 traj = data[key]
                 obs = traj['obs']
 
-                state = np.hstack([flatten_state(obs['agent']), flatten_state(obs['extra'])])
+                state = np.hstack(
+                    [flatten_state(obs['agent']), flatten_state(obs['extra'])])
                 self.states.append(state[:-1])
 
                 act = traj['actions']
@@ -171,6 +172,47 @@ class ManiskillDataset(Dataset):
         return state, rgbd, action
 
 
+class ManiskillStateDataset(Dataset):
+    def __init__(self,
+                 data_path: str,
+                 load_count: int = None) -> None:
+        super().__init__()
+
+        self.states = []
+        self.actions = []
+
+        with h5.File(data_path, 'r') as data:
+            self.keys = list(data.keys())
+
+        if load_count is not None:
+            load_keys = self.keys[:load_count]
+        else:
+            load_keys = self.keys
+
+        with h5.File(data_path, 'r') as data:
+            for key in tqdm(load_keys):
+                traj = data[key]
+                obs = traj['obs']
+                self.states.append(np.array(obs[:-1], dtype=np.float32))
+
+                act = traj['actions']
+                self.actions.append(np.array(act, dtype=np.float32))
+
+
+        self.states = np.vstack(self.states)
+        self.actions = np.vstack(self.actions)
+
+        assert len(self.states) == len(self.actions)
+
+    def __len__(self) -> int:
+        return len(self.states)
+
+    def __getitem__(self, idx: int) -> tuple:
+        state = torch.from_numpy(self.states[idx])
+        action = torch.from_numpy(self.actions[idx])
+        return state, action
+
+
 if __name__ == '__main__':
     from torch.utils.data import DataLoader
     data_path = os.path.join(dir_path,
@@ -179,13 +221,12 @@ if __name__ == '__main__':
                              'v0',
                              'rigid_body',
                              'LiftCube-v0',
-                             'trajectory.rgbd.pd_ee_delta_pose.h5'
+                             'trajectory.state.pd_ee_delta_pose.h5'
                              )
-    dataset = ManiskillDataset(data_path, load_count=1)
+    dataset = ManiskillStateDataset(data_path, load_count=2)
     print(len(dataset.keys))
     dataloader = DataLoader(dataset, batch_size=32)
-    for state, rgbd, action in dataloader:
+    for state, action in dataloader:
         print(state.shape)
-        print(rgbd.shape)
         print(action.shape)
         break
