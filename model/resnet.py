@@ -86,6 +86,7 @@ class ResNetFeatureExtractor(BaseFeatureExtractor):
         self.resnet = ResNet(in_channels, mid_channels, out_channels)
         self.image_linear = nn.Linear(32*32*out_channels, image_embedding)
         self.state_linear = nn.Linear(state_dim, state_embedding)
+        self.out_dim = image_embedding + state_embedding
 
     def forward(self,
                 state: torch.Tensor,
@@ -100,3 +101,6 @@ class ResNetFeatureExtractor(BaseFeatureExtractor):
 
         feature = torch.cat([state_feature, image_feature], dim=1)
         return feature
+    
+    def get_out_dim(self) -> int:
+        return self.out_dim
