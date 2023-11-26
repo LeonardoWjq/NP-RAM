@@ -214,7 +214,7 @@ class TransformerRewardNet(RewardNet):
                 next_state: torch.Tensor,  # (batch_size, *obs_shape)
                 done: torch.Tensor,  # (batch_size,)
                 ) -> torch.Tensor:
-        
+
         state = torch.reshape(state,
                               (-1, self.seq_len, self.obs_dim))
 
@@ -222,8 +222,9 @@ class TransformerRewardNet(RewardNet):
 
         act_embedding: torch.tensor = self.act_embedding(action).unsqueeze(1)
 
-        concat_embedding = torch.concat((state_embedding, act_embedding), dim=1)
-        
+        concat_embedding = torch.concat(
+            (state_embedding, act_embedding), dim=1)
+
         embedding = self.pos_encoder(concat_embedding)*math.sqrt(self.d_model)
 
         feature = self.encoder(embedding)
@@ -257,7 +258,7 @@ def record_video(agent: PPO,
                  num_envs: int = 1,
                  max_length: int = 300,
                  suffix=''):
-    
+
     agent.policy.eval()
     if suffix:
         prefix = f'PPO_StackCube_{suffix}'
