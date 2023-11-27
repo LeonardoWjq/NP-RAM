@@ -1,32 +1,30 @@
 import torch
 import torch.nn as nn
-from torch.functional import F
+from model.base import BaseFeatureExtractor
 
-
-class MLP(nn.Module):
+class MLPExtractor(BaseFeatureExtractor):
     def __init__(self,
+                 state_dim: int,
                  feature_dim: int,
-                 act_dim: int,
-                 embed_dim: int = 256,
-                 squash_act: bool = True
+                 layer_count: int = 2
                  ) -> None:
-        super().__init__()
+        super().__init__(state_dim=state_dim, 
+                         feature_dim=feature_dim, 
+                         name='MLP')
 
-        self.mlp = nn.Sequential(
-            nn.Linear(feature_dim, embed_dim),
-            nn.Mish(),
-            nn.Linear(embed_dim, embed_dim),
-            nn.Mish(),
-            nn.Linear(embed_dim, embed_dim),
-            nn.Mish(),
-            nn.Linear(embed_dim, act_dim),
-        )
-        
-        self.squash_act = squash_act
+        layers = []
+        layers.append(nn.Linear(state_dim, feature_dim)) # input layer
+        layers.append(nn.Mish())
+        for _ in range(layer_count):
+            layers.append(nn.Linear(feature_dim, feature_dim))
+            layers.append(nn.Mish())
 
-    def forward(self, feature: torch.Tensor) -> torch.Tensor:
-        act = self.mlp(feature)
-        if self.squash_act:
-            return F.tanh(act)
-        else:
-            return act
+        self.mlp = nn.Sequential(*layers)
+
+    def forward(self, obs: torch.Tensor) -> torch.Tensor:
+        return self.mlp(obs)
+
+if __name__ == '__main__':
+    mlp = MLPExtractor(state_dim=10, feature_dim=256)
+    print(mlp)
+    print(mlp(torch.randn(5, 10)).shape)

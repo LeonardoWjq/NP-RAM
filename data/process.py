@@ -186,8 +186,31 @@ def generate_train_val_original(split=0.9, seed=42):
         json.dump(val_keys, f, indent=4)
 
 
+def split_train_val(env_id: str, split=0.95, seed=42):
+    random.seed(seed)
+    dir_path = make_path('demonstrations',
+                         'v0',
+                         'rigid_body',
+                         env_id)
+    h5_path = os.path.join(dir_path, 'trajectory.h5')
+    with h5.File(h5_path, 'r') as data:
+        keys = list(data.keys())
+        random.shuffle(keys)
+        split_point = int(split * len(keys))
+        train_keys = keys[:split_point]
+        val_keys = keys[split_point:]
+    
+    train_path = os.path.join(dir_path, 'train.json')
+    val_path = os.path.join(dir_path, 'validation.json')
+    with open(train_path, 'w') as f:
+        json.dump(train_keys, f, indent=4)
+        print(f'Added {len(train_keys)} trajectories to the training set.')
+    with open(val_path, 'w') as f:
+        json.dump(val_keys, f, indent=4)
+        print(f'Added {len(val_keys)} trajectories to the validation set.')
 
 if __name__ == '__main__':
     # create_and_split_color()
     # generate_train_val()
-    generate_train_val_original()
+    # generate_train_val_original()
+    split_train_val('LiftCube-v0')
