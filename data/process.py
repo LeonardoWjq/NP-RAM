@@ -213,4 +213,4 @@ if __name__ == '__main__':
     # create_and_split_color()
     # generate_train_val()
     # generate_train_val_original()
-    split_train_val('LiftCube-v0')
+    split_train_val('LiftCube-v0', split=0.90)

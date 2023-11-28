@@ -20,8 +20,7 @@ class BaseFeatureExtractor(ABC, nn.Module):
         return self.feature_dim
 
     @abstractmethod
-    def forward(self,
-                obs: Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]) -> torch.Tensor:
+    def forward(self, state: torch.Tensor, rgbd: Union[torch.Tensor, None] = None) -> torch.Tensor:
         pass
 
 
@@ -49,9 +48,12 @@ class BasePolicy(nn.Module):
         self._regressor = regressor
         self._squash_output = squash_output
     
-    def forward(self,
-                obs: Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]) -> torch.Tensor:
-        feature = self._feature_extractor(obs)
+    def forward(self, state: torch.Tensor, rgbd: Union[torch.Tensor, None] = None) -> torch.Tensor:
+        if rgbd is None:
+            feature = self._feature_extractor(state)
+        else:
+            feature = self._feature_extractor(state, rgbd)
+
         action = self._regressor(feature)
         if self._squash_output:
             action = torch.tanh(action)

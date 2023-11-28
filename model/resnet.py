@@ -1,8 +1,8 @@
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
-from model.base_model import BaseFeatureExtractor
-
+from model.base import BaseFeatureExtractor
+from typing import Tuple
 
 class ResBlock(nn.Module):
     def __init__(self,
@@ -72,35 +72,34 @@ class ResNet(nn.Module):
         return torch.flatten(x, start_dim=1)
 
 
-class ResNetFeatureExtractor(BaseFeatureExtractor):
+class ResNetExtractor(BaseFeatureExtractor):
     def __init__(self,
                  state_dim: int,
                  in_channels: int = 8,
                  mid_channels: int = 16,
                  out_channels: int = 8,
                  image_embedding: int = 256,
-                 state_embedding: int = 64,
-                 name='ResNetFeatureExtractor'
+                 state_embedding: int = 64
                  ) -> None:
-        super().__init__(state_dim=state_dim, name=name)
-        self.resnet = ResNet(in_channels, mid_channels, out_channels)
-        self.image_linear = nn.Linear(32*32*out_channels, image_embedding)
-        self.state_linear = nn.Linear(state_dim, state_embedding)
-        self.out_dim = image_embedding + state_embedding
+        super().__init__(state_dim=state_dim,
+                         feature_dim=image_embedding + state_embedding,
+                         name='ResNet')
+        self._resnet = ResNet(in_channels, mid_channels, out_channels)
+        self._image_linear = nn.Linear(32*32*out_channels, image_embedding)
+        self._state_linear = nn.Linear(state_dim, state_embedding)
 
-    def forward(self,
-                state: torch.Tensor,
-                image: torch.Tensor) -> torch.Tensor:
-
-        state = self.state_linear(state)
+    def forward(self, state: torch.Tensor, rgbd: torch.Tensor) -> torch.Tensor:
+        state = self._state_linear(state)
         state_feature = F.mish(state)
 
-        image = self.resnet(image)
-        image = self.image_linear(image)
-        image_feature = F.mish(image)
+        rgbd = self._resnet(rgbd)
+        rgbd = self._image_linear(rgbd)
+        rgbd_feature = F.mish(rgbd)
 
-        feature = torch.cat([state_feature, image_feature], dim=1)
+        feature = torch.cat([state_feature, rgbd_feature], dim=1)
         return feature
-    
-    def get_out_dim(self) -> int:
-        return self.out_dim
+
+if __name__ == '__main__':
+    resnet = ResNetExtractor(state_dim=42)
+    print(resnet)
+    print(resnet(torch.randn(5, 42), torch.randn(5, 128, 128, 8)).shape)

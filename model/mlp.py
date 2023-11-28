@@ -21,8 +21,8 @@ class MLPExtractor(BaseFeatureExtractor):
 
         self.mlp = nn.Sequential(*layers)
 
-    def forward(self, obs: torch.Tensor) -> torch.Tensor:
-        return self.mlp(obs)
+    def forward(self, state: torch.Tensor, rgbd = None) -> torch.Tensor:
+        return self.mlp(state)
 
 if __name__ == '__main__':
     mlp = MLPExtractor(state_dim=10, feature_dim=256)
