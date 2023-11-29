@@ -14,18 +14,20 @@ from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
-from data.dataset import ManiskillSingleDataset
-from model.resnet import ResNetExtractor
+from data.dataset import ManiskillSeqDataset
+from model.transformer import TransformerExtractor
 from model.linear import LinearRegressor
 from model.base import BasePolicy
-from utils.data_utils import make_path, rescale_rgbd, process_image, flatten_state
+from utils.data_utils import make_path
+from utils.train_utils import init_deque, update_deque
 
 env_id = 'LiftCube-v0'
-obs_mode = 'rgbd'
+obs_mode = 'state'
 control_mode = 'pd_ee_delta_pose'
 
 
-log_path = make_path('logs', f'BC-ResNet-{env_id}-{obs_mode}-{control_mode}')
+log_path = make_path(
+    'logs', f'BC-Transformer-{env_id}-{obs_mode}-{control_mode}')
 ckpt_path = os.path.join(log_path, 'checkpoints')
 tb_path = os.path.join(log_path, 'tensorboard')
 video_path = os.path.join(log_path, 'videos')
@@ -35,7 +37,7 @@ Path(ckpt_path).mkdir(exist_ok=True, parents=True)
 Path(tb_path).mkdir(exist_ok=True, parents=True)
 Path(video_path).mkdir(exist_ok=True, parents=True)
 
-gpu_id = 'cuda:2'
+gpu_id = 'cuda:3'
 device = torch.device(gpu_id if torch.cuda.is_available() else 'cpu')
 
 
@@ -45,12 +47,11 @@ def validate(policy: BasePolicy,
     total_loss = 0
     policy.eval()
     with torch.no_grad():
-        for state, rgbd, action in dataloader:
+        for state, action in dataloader:
             state = state.to(device)
-            rgbd = rgbd.to(device)
             action = action.to(device)
 
-            pred = policy(state, rgbd)
+            pred = policy(state)
             loss = criterion(pred, action)
             total_loss += loss.item()*len(state)
     policy.train()
@@ -60,11 +61,16 @@ def validate(policy: BasePolicy,
 def init_training(start_epoch: int,
                   state_dim: int,
                   act_dim: int,
+                  feature_dim: int,
+                  seq_len: int,
                   lr: float,
-                  weight_decay: float) -> Tuple[BasePolicy, optim.Optimizer, float, float, str]:
+                  weight_decay: float) -> Tuple[BasePolicy, optim.Optimizer, float, str]:
 
-    feature_extractor = ResNetExtractor(state_dim=state_dim)
-    feature_dim = feature_extractor.get_feature_dim()
+    feature_extractor = TransformerExtractor(state_dim=state_dim,
+                                             feature_dim=feature_dim,
+                                             seq_len=seq_len,
+                                             layer_count=2)
+
     regressor = LinearRegressor(feature_dim=feature_dim,
                                 act_dim=act_dim,
                                 layer_count=3)
@@ -72,7 +78,9 @@ def init_training(start_epoch: int,
     policy = BasePolicy(feature_extractor=feature_extractor,
                         regressor=regressor,
                         squash_output=True)
+
     policy.to(device)
+
     if start_epoch > 0:
         print('Loading checkpoint...')
         ckpt = os.path.join(ckpt_path, f'ckpt_{start_epoch}.pt')
@@ -85,19 +93,16 @@ def init_training(start_epoch: int,
         with open(os.path.join(log_path, 'train_log.json'), 'r') as f:
             log = json.load(f)
             min_loss = log['min_loss']
-            best_success_rate = log['best_success_rate']
             best_ckpt = log['best_ckpt']
     else:
         print('Starting from scratch...')
         optimizer = optim.RAdam(policy.parameters(),
                                 lr=lr,
                                 weight_decay=weight_decay)
-
         min_loss = np.inf
-        best_success_rate = 0.0
         best_ckpt = None
 
-    return policy, optimizer, min_loss, best_success_rate, best_ckpt
+    return policy, optimizer, min_loss, best_ckpt
 
 
 def save_ckpt(epoch: int,
@@ -114,19 +119,19 @@ def save_ckpt(epoch: int,
     return ckpt
 
 
-def train(batch_size: int = 64,
-          epoch: int = 100,
+def train(feature_dim: int = 512,
+          seq_len: int = 8,
+          batch_size: int = 64,
+          epoch: int = 10,
           lr: float = 1e-3,
           weight_decay: float = 1e-5,
           loss_coeff: float = 0.9,
           seed: int = 42,
           ckpt_freq: int = 5,
-          eval_freq: int = 50,
-          eval_episodes: int = 20,
           start_epoch: int = 0) -> str:
     '''
     Train a policy using behavioral cloning.
-    Use ResNet feature extractor and a linear regressor.
+    Use MLP feature extractor and a linear regressor.
     Output the best checkpoint.
     '''
 
@@ -135,15 +140,16 @@ def train(batch_size: int = 64,
     np.random.seed(seed)
 
     print('Loading data...')
-    train_set = ManiskillSingleDataset(env_id,
-                                       obs_mode,
-                                       control_mode,
-                                       train=True)
-    val_set = ManiskillSingleDataset(env_id,
-                                     obs_mode,
-                                     control_mode,
-                                     train=False)
-
+    train_set = ManiskillSeqDataset(env_id,
+                                    obs_mode,
+                                    control_mode,
+                                    seq_len,
+                                    train=True)
+    val_set = ManiskillSeqDataset(env_id,
+                                  obs_mode,
+                                  control_mode,
+                                  seq_len,
+                                  train=False)
     train_loader = DataLoader(train_set,
                               batch_size=batch_size,
                               shuffle=True,
@@ -159,28 +165,27 @@ def train(batch_size: int = 64,
     state_dim = train_set.state_dim
     act_dim = train_set.act_dim
 
-    policy, optimizer, min_loss, best_success_rate, best_ckpt = init_training(start_epoch,
-                                                                              state_dim,
-                                                                              act_dim,
-                                                                              lr,
-                                                                              weight_decay)
+    policy, optimizer,  min_loss, best_ckpt = init_training(start_epoch,
+                                                            state_dim,
+                                                            act_dim,
+                                                            feature_dim,
+                                                            seq_len,
+                                                            lr,
+                                                            weight_decay)
+
     policy.train()
-    dummy_state = torch.zeros((1, state_dim)).to(device)
-    dummy_rgbd = torch.zeros((1, 128, 128, 8)).to(device)
-    writer.add_graph(policy, (dummy_state, dummy_rgbd))
 
     criterion = nn.MSELoss(reduction='mean')
 
     print('Start training...')
     for epoch in tqdm(range(start_epoch+1, epoch+1)):
         total_train_loss = 0
-        for state, rgbd, action in train_loader:
+        for state, action in train_loader:
             state = state.to(device)
-            rgbd = rgbd.to(device)
             action = action.to(device)
 
             optimizer.zero_grad()
-            pred = policy(state, rgbd)
+            pred = policy(state)
             train_loss = criterion(pred, action)
             train_loss.backward()
             optimizer.step()
@@ -196,34 +201,24 @@ def train(batch_size: int = 64,
             mean_val_loss = total_val_loss / len(val_set)
             writer.add_scalar('Loss/Validation', mean_val_loss, epoch)
 
-            weighted_loss = loss_coeff*mean_train_loss + \
-                (1-loss_coeff)*mean_val_loss
-            writer.add_scalar('Loss/Weighted', weighted_loss, epoch)
-
+            weighted_loss = mean_train_loss * loss_coeff + \
+                mean_val_loss * (1 - loss_coeff)
             if weighted_loss < min_loss:
                 min_loss = weighted_loss
+                best_ckpt = ckpt
 
-            log = dict(batch_size=batch_size,
+            log = dict(feature_dim=feature_dim,
+                       seq_len=seq_len,
+                       batch_size=batch_size,
                        lr=lr,
                        weight_decay=weight_decay,
                        loss_coeff=loss_coeff,
                        seed=seed,
                        min_loss=min_loss,
-                       best_success_rate=best_success_rate,
                        best_ckpt=best_ckpt)
 
             with open(os.path.join(log_path, 'train_log.json'), 'w') as f:
                 json.dump(log, f, indent=4)
-
-        if epoch % eval_freq == 0:
-            ckpt = save_ckpt(epoch, policy, optimizer)
-            success_rate = evaluate(ckpt,
-                                    seed=seed,
-                                    save_video=False,
-                                    num_episodes=eval_episodes)
-            if success_rate >= best_success_rate:
-                best_success_rate = success_rate
-                best_ckpt = ckpt
 
     writer.flush()
     writer.close()
@@ -231,11 +226,11 @@ def train(batch_size: int = 64,
     return best_ckpt
 
 
-def evaluate(ckpt: str,
-             seed: int = 42,
-             save_video: bool = True,
-             max_steps: int = 200,
-             num_episodes: int = 10) -> List[int]:
+def test(ckpt: str,
+         feature_dim: int = 256,
+         seq_len: int = 8,
+         max_steps: int = 200,
+         num_episodes: int = 30) -> List[int]:
 
     env = gym.make(id=env_id,
                    obs_mode=obs_mode,
@@ -248,83 +243,76 @@ def evaluate(ckpt: str,
     env = RecordEpisode(
         env,
         video_path,
-        save_video=save_video,
         info_on_video=True,
-        save_trajectory=True,
-        save_on_reset=False
+        save_trajectory=True
     )
 
-    obs, _ = env.reset(seed=seed)
-    state = np.hstack([flatten_state(obs['agent']),
-                       flatten_state(obs['extra'])])
-    state_dim = state.shape[0]
+    state_dim = env.observation_space.shape[0]
     act_dim = env.action_space.shape[0]
 
-    feature_extractor = ResNetExtractor(state_dim=state_dim)
-    feature_dim = feature_extractor.get_feature_dim()
+    feature_extractor = TransformerExtractor(state_dim=state_dim,
+                                             feature_dim=feature_dim,
+                                             seq_len=seq_len,
+                                             layer_count=2)
+
     regressor = LinearRegressor(feature_dim=feature_dim,
                                 act_dim=act_dim,
                                 layer_count=3)
+
     policy = BasePolicy(feature_extractor=feature_extractor,
                         regressor=regressor,
                         squash_output=True)
 
-    loaded_ckpt = torch.load(ckpt)
-    policy.load_state_dict(loaded_ckpt['policy_state_dict'])
+    ckpt = torch.load(ckpt)
+    policy.load_state_dict(ckpt['policy_state_dict'])
     policy.to(device)
     policy.eval()
 
-    success_count = 0
+    success_seeds = []
+    returns = {}
 
-    print('Start evaluating...')
+    print('Start testing...')
     with torch.no_grad():
-        for run in tqdm(range(1, num_episodes+1)):
-            obs, _ = env.reset()
-
+        for seed in tqdm(range(num_episodes)):
+            obs, _ = env.reset(seed=seed)
+            G = 0
             terminated = False
             truncated = False
-
+            state_deque = init_deque(obs, seq_len)
+            state_sequence = np.array(state_deque, dtype=np.float32)
             while not terminated and not truncated:
-                state = np.hstack([flatten_state(obs['agent']),
-                                   flatten_state(obs['extra'])])
-
-                rgbd = process_image(obs['image'])
-                # the environment already rescales the depth
-                rgbd = rescale_rgbd(rgbd, scale_rgb_only=True)
-
-                state = torch.from_numpy(state)
-                rgbd = torch.from_numpy(rgbd)
-                state = state.unsqueeze(0).to(device)
-                rgbd = rgbd.unsqueeze(0).to(device)
-
-                action = policy(state, rgbd)
+                state_sequence = torch.from_numpy(state_sequence)
+                state_sequence = state_sequence.unsqueeze(0).to(device)
+                action = policy(state_sequence)
                 action = action.cpu().numpy()
                 obs, reward, terminated, truncated, info = env.step(action[0])
+                state_sequence = update_deque(obs, state_deque)
+                G += reward
 
             if info['success']:
-                success_count += 1
+                success_seeds.append(seed)
 
-            if save_video:
-                if info['success']:
-                    env.flush_video(
-                        suffix=f'_{seed}_{run}_success')
-                else:
-                    env.flush_video(suffix=f'_{seed}_{run}_fail')
+            returns[seed] = G
     env.close()
 
-    success_rate = success_count / num_episodes
+    success_rate = len(success_seeds) / num_episodes
     print('Success Rate:', success_rate)
+    log = dict(returns=returns,
+               max_steps=max_steps,
+               num_episodes=num_episodes,
+               success_rate=success_rate,
+               success_seeds=success_seeds)
 
-    with open(os.path.join(log_path, 'eval_log.text'), 'a') as f:
-        f.write(f'Checkpoint: {ckpt}\n')
-        f.write(f'Seed: {seed}\n')
-        f.write(f'Success Rate: {success_rate}\n')
+    with open(os.path.join(log_path, 'test_log.json'), 'w') as f:
+        json.dump(log, f, indent=4)
 
-    return success_rate
+    return success_seeds
 
 
 def render_video(ckpt: str,
                  seeds: List[int],
+                 seq_len: int,
+                 feature_dim: int = 256,
                  max_steps: int = 200) -> None:
 
     env = gym.make(id=env_id,
@@ -341,14 +329,14 @@ def render_video(ckpt: str,
         info_on_video=True,
         save_trajectory=False
     )
-    obs, _ = env.reset()
-    state = np.hstack([flatten_state(obs['agent']),
-                       flatten_state(obs['extra'])])
-    state_dim = state.shape[0]
+    state_dim = env.observation_space.shape[0]
     act_dim = env.action_space.shape[0]
 
-    feature_extractor = ResNetExtractor(state_dim=state_dim)
-    feature_dim = feature_extractor.get_feature_dim()
+    feature_extractor = TransformerExtractor(state_dim=state_dim,
+                                             feature_dim=feature_dim,
+                                             seq_len=seq_len,
+                                             layer_count=2)
+
     regressor = LinearRegressor(feature_dim=feature_dim,
                                 act_dim=act_dim,
                                 layer_count=3)
@@ -367,36 +355,33 @@ def render_video(ckpt: str,
             obs, _ = env.reset(seed=seed)
             terminated = False
             truncated = False
-
+            state_deque = init_deque(obs, seq_len)
+            state_sequence = np.array(state_deque, dtype=np.float32)
             while not terminated and not truncated:
-                state = np.hstack([flatten_state(obs['agent']),
-                                   flatten_state(obs['extra'])])
-                rgbd = process_image(obs['image'])
-                rgbd = rescale_rgbd(rgbd, scale_rgb_only=True)
-                state = torch.from_numpy(state)
-                rgbd = torch.from_numpy(rgbd)
-                state = state.unsqueeze(0).to(device)
-                rgbd = rgbd.unsqueeze(0).to(device)
-
-                action = policy(state, rgbd)
+                state_sequence = torch.from_numpy(state_sequence)
+                state_sequence = state_sequence.unsqueeze(0).to(device)
+                action = policy(state_sequence)
                 action = action.cpu().numpy()
                 obs, reward, terminated, truncated, info = env.step(action[0])
+                state_sequence = update_deque(obs, state_deque)
     env.close()
 
 
 if __name__ == '__main__':
-
-    ckpt = train(lr=1e-3,
+    seq_len = 8
+    feature_dim = 256
+    ckpt = train(lr=5e-4,
+                 seq_len=seq_len,
+                 feature_dim=feature_dim,
                  batch_size=128,
-                 epoch=300,
-                 ckpt_freq=2,
-                 eval_freq=30,
-                 eval_episodes=20,
+                 epoch=500,
+                 ckpt_freq=5,
                  start_epoch=0)
 
-    # ckpt = os.path.join(ckpt_path, 'ckpt_32.pt')
+    # ckpt = os.path.join(ckpt_path, 'ckpt_50.pt')
 
-    success_rate = evaluate(ckpt=ckpt,
-                            num_episodes=50)
-    # render_video(ckpt=ckpt,
-    #              seeds=success_seeds[:5])
+    success_seeds = test(ckpt,
+                         feature_dim=feature_dim,
+                         seq_len=seq_len,
+                         num_episodes=50)
+    # render_video(ckpt, success_seeds[:5])

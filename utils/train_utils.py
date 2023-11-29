@@ -3,7 +3,8 @@ import pathlib
 from utils.data_utils import make_path
 import numpy as np
 from collections import deque
-
+from typing import Deque
+from numpy.typing import NDArray
 
 def make_log_dir(log_dir: str, model: str):
     checkpoint_path = make_path(log_dir, model, 'checkpoints')
@@ -14,7 +15,7 @@ def make_log_dir(log_dir: str, model: str):
     pathlib.Path(video_path).mkdir(parents=True, exist_ok=True)
 
 
-def init_deque(obs: np.ndarray, seq_len: int, mode: str = 'zero'):
+def init_deque(obs: np.ndarray, seq_len: int, mode: str = 'zero') -> Deque[np.ndarray]:
     assert mode in ['zero', 'repeat'], f'mode {mode} not supported'
 
     if mode == 'zero':
@@ -26,6 +27,6 @@ def init_deque(obs: np.ndarray, seq_len: int, mode: str = 'zero'):
     return deque(sequence, maxlen=seq_len)
 
 
-def update_deque(obs: np.ndarray, window: deque):
+def update_deque(obs: np.ndarray, window: deque) -> NDArray[np.float32]:
     window.append(obs)
-    return np.array(window)
+    return np.array(window, dtype=np.float32)

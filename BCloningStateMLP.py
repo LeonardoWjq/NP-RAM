@@ -61,7 +61,7 @@ def init_training(start_epoch: int,
                   act_dim: int,
                   feature_dim: int,
                   lr: float,
-                  weight_decay: float) -> Tuple[BasePolicy, optim.Optimizer, float, str]:
+                  weight_decay: float) -> Tuple[BasePolicy, optim.Optimizer, float, float, str]:
 
     feature_extractor = MLPExtractor(state_dim=state_dim,
                                      feature_dim=feature_dim,
@@ -84,6 +84,7 @@ def init_training(start_epoch: int,
         with open(os.path.join(log_path, 'train_log.json'), 'r') as f:
             log = json.load(f)
             min_loss = log['min_loss']
+            best_success_rate = log['best_success_rate']
             best_ckpt = log['best_ckpt']
     else:
         print('Starting from scratch...')
@@ -91,9 +92,10 @@ def init_training(start_epoch: int,
                                 lr=lr,
                                 weight_decay=weight_decay)
         min_loss = np.inf
+        best_success_rate = 0.0
         best_ckpt = None
 
-    return policy, optimizer, min_loss, best_ckpt
+    return policy, optimizer, min_loss, best_success_rate, best_ckpt
 
 
 def save_ckpt(epoch: int,
@@ -118,6 +120,8 @@ def train(feature_dim: int = 256,
           loss_coeff: float = 0.9,
           seed: int = 42,
           ckpt_freq: int = 5,
+          eval_freq: int = 50,
+          eval_episodes: int = 20,
           start_epoch: int = 0) -> str:
     '''
     Train a policy using behavioral cloning.
@@ -153,12 +157,12 @@ def train(feature_dim: int = 256,
     state_dim = train_set.state_dim
     act_dim = train_set.act_dim
 
-    policy, optimizer,  min_loss, best_ckpt = init_training(start_epoch,
-                                                            state_dim,
-                                                            act_dim,
-                                                            feature_dim,
-                                                            lr,
-                                                            weight_decay)
+    policy, optimizer,  min_loss, best_success_rate, best_ckpt = init_training(start_epoch,
+                                                                               state_dim,
+                                                                               act_dim,
+                                                                               feature_dim,
+                                                                               lr,
+                                                                               weight_decay)
     policy.train()
     dummy_state = torch.zeros((1, state_dim)).to(device)
     writer.add_graph(policy, dummy_state)
@@ -189,22 +193,36 @@ def train(feature_dim: int = 256,
             mean_val_loss = total_val_loss / len(val_set)
             writer.add_scalar('Loss/Validation', mean_val_loss, epoch)
 
-            weighted_loss = mean_train_loss * loss_coeff + mean_val_loss * (1 - loss_coeff)
+            weighted_loss = mean_train_loss * loss_coeff + \
+                mean_val_loss * (1 - loss_coeff)
+
+            writer.add_scalar('Loss/Weighted', weighted_loss, epoch)
+
             if weighted_loss < min_loss:
                 min_loss = weighted_loss
-                best_ckpt = ckpt
 
-            log = dict(feature_dim = feature_dim,
-                       batch_size = batch_size,
-                       lr = lr,
-                       weight_decay = weight_decay,
-                       loss_coeff = loss_coeff,
-                       seed = seed,
-                       min_loss = min_loss,
-                       best_ckpt = best_ckpt)
-            
+            log = dict(feature_dim=feature_dim,
+                       batch_size=batch_size,
+                       lr=lr,
+                       weight_decay=weight_decay,
+                       loss_coeff=loss_coeff,
+                       min_loss=min_loss,
+                       best_success_rate=best_success_rate,
+                       best_ckpt=best_ckpt)
+
             with open(os.path.join(log_path, 'train_log.json'), 'w') as f:
                 json.dump(log, f, indent=4)
+
+        if epoch % eval_freq == 0:
+            ckpt = save_ckpt(epoch, policy, optimizer)
+            success_rate = evalulate(ckpt,
+                                     seed=seed,
+                                     feature_dim=feature_dim,
+                                     save_video=False,
+                                     num_episodes=eval_episodes)
+            if success_rate >= best_success_rate:
+                best_success_rate = success_rate
+                best_ckpt = ckpt
 
     writer.flush()
     writer.close()
@@ -212,10 +230,12 @@ def train(feature_dim: int = 256,
     return best_ckpt
 
 
-def test(ckpt: str,
-         feature_dim: int = 256,
-         max_steps: int = 200,
-         num_episodes: int = 30) -> List[int]:
+def evalulate(ckpt: str,
+              seed: int = 42,
+              feature_dim: int = 256,
+              save_video: bool = True,
+              max_steps: int = 200,
+              num_episodes: int = 10) -> List[int]:
 
     env = gym.make(id=env_id,
                    obs_mode=obs_mode,
@@ -228,9 +248,13 @@ def test(ckpt: str,
     env = RecordEpisode(
         env,
         video_path,
+        save_video=save_video,
         info_on_video=True,
-        save_trajectory=True
+        save_trajectory=True,
+        save_on_reset=False
     )
+
+    env.reset(seed=seed)
 
     state_dim = env.observation_space.shape[0]
     act_dim = env.action_space.shape[0]
@@ -244,19 +268,17 @@ def test(ckpt: str,
                         regressor=regressor,
                         squash_output=True)
 
-    ckpt = torch.load(ckpt)
-    policy.load_state_dict(ckpt['policy_state_dict'])
+    loaded_ckpt = torch.load(ckpt)
+    policy.load_state_dict(loaded_ckpt['policy_state_dict'])
     policy.to(device)
     policy.eval()
 
-    success_seeds = []
-    returns = {}
+    success_count = 0
 
-    print('Start testing...')
+    print('Start evaluating...')
     with torch.no_grad():
-        for seed in tqdm(range(num_episodes)):
-            obs, _ = env.reset(seed=seed)
-            G = 0
+        for run in tqdm(range(1, num_episodes+1)):
+            obs, _ = env.reset()
             terminated = False
             truncated = False
 
@@ -266,26 +288,27 @@ def test(ckpt: str,
                 action = policy(obs)
                 action = action.cpu().numpy()
                 obs, reward, terminated, truncated, info = env.step(action[0])
-                G += reward
 
             if info['success']:
-                success_seeds.append(seed)
+                success_count += 1
 
-            returns[seed] = G
+            if save_video:
+                if info['success']:
+                    env.flush_video(
+                        suffix=f'_{seed}_{run}_success')
+                else:
+                    env.flush_video(suffix=f'_{seed}_{run}_fail')
     env.close()
 
-    success_rate = len(success_seeds) / num_episodes
+    success_rate = success_count / num_episodes
     print('Success Rate:', success_rate)
-    log = dict(returns=returns,
-               max_steps=max_steps,
-               num_episodes=num_episodes,
-               success_rate=success_rate,
-               success_seeds=success_seeds)
 
-    with open(os.path.join(log_path, 'test_log.json'), 'w') as f:
-        json.dump(log, f, indent=4)
+    with open(os.path.join(log_path, 'eval_log.text'), 'a') as f:
+        f.write(f'Checkpoint: {ckpt}\n')
+        f.write(f'Seed: {seed}\n')
+        f.write(f'Success Rate: {success_rate}\n')
 
-    return success_seeds
+    return success_rate
 
 
 def render_video(ckpt: str,
@@ -342,14 +365,21 @@ def render_video(ckpt: str,
 
 
 if __name__ == '__main__':
+    env = gym.make(id=env_id,
+                   render_mode="rgb_array",
+                   enable_shadow=True,
+                   obs_mode=obs_mode,
+                   control_mode=control_mode,
+                   max_episode_steps=200,
+                   renderer_kwargs={'device': gpu_id})
+    env.reset()
+    print(env._get_obs())
+    # ckpt = train(lr=1e-3,
+    #              batch_size=128,
+    #              epoch=500,
+    #              start_epoch=0)
 
-    ckpt = train(lr=1e-3,
-                 batch_size=128,
-                 epoch=1000,
-                 ckpt_freq=5,
-                 start_epoch=0)
+    # ckpt = os.path.join(ckpt_path, 'ckpt_100.pt')
 
-    # ckpt = os.path.join(ckpt_path, 'ckpt_82.pt')
-
-    success_seeds = test(ckpt, num_episodes=50)
+    # success_rate = evalulate(ckpt, num_episodes=50)
     # render_video(ckpt, success_seeds[:5])

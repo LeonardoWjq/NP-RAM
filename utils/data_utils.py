@@ -6,6 +6,9 @@ import clip
 import h5py as h5
 import numpy as np
 import torch
+from numpy.typing import NDArray
+from typing import List
+from imitation.data.types import Trajectory
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -80,7 +83,7 @@ def flatten_obs(obs):
                            ], axis=-1)
 
 
-def obs_to_sequences(obs: np.array, sequence_len: int, mode: str = 'zero') -> np.array:
+def obs_to_sequences(obs: np.array, sequence_len: int, mode: str = 'zero') -> NDArray[np.float32]:
     assert mode in ['zero', 'repeat'], f'mode {mode} not supported'
 
     if mode == 'zero':
@@ -92,7 +95,30 @@ def obs_to_sequences(obs: np.array, sequence_len: int, mode: str = 'zero') -> np
     sequences = []
     for i in range(len(obs)):
         sequences.append(aug_obs[i:i + sequence_len])
-    return np.array(sequences)
+    return np.array(sequences, dtype=np.float32)
+
+
+def segment_trajectory(traj: h5.Group, segment_size) -> List[Trajectory]:
+    act = np.array(traj['actions'], dtype=np.float32)
+    assert len(act) >= segment_size, f'segment size must be smaller than the length of the episode {len(act)}'
+
+    obs = np.array(traj['obs'], dtype=np.float32)
+    success = np.array(traj['success'])
+    segments = []
+    for i in range(len(obs)-segment_size):
+        segments.append(Trajectory(obs=obs[i:i+segment_size+1],
+                                   acts=act[i:i+segment_size],
+                                   infos=None,
+                                   terminal=success[i:i+segment_size].any()))
+    
+    return segments
+
+def make_trajectory(data_path:str, segment_size: int = 64):
+    trajs = []
+    with h5.File(data_path, 'r') as f:
+        for traj in f.values():
+            trajs.extend(segment_trajectory(traj, segment_size))
+    return trajs
 
 
 def process_image(image: h5.Group):
@@ -133,10 +159,13 @@ def flatten_state(obs):
 
 
 if __name__ == '__main__':
-    import h5py
-    h5_path = make_path('datasets', 'train', 'trajectory_state.h5')
-    f = h5py.File(h5_path, 'r')
-    print(f['traj_0']['obs'])
-    print(f['traj_0']['actions'])
-    print(f['traj_0']['instruction'])
-    f.close()
+    h5_path = make_path('demonstrations',
+                        'v0',
+                        'rigid_body',
+                        'LiftCube-v0',
+                        'trajectory.state.pd_ee_delta_pose.h5')
+
+    trajectories = make_trajectory(h5_path, 16)
+    print(len(trajectories))
+    # for traj in trajectories:
+    #     print(len(traj))
