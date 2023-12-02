@@ -9,8 +9,7 @@ class MLPExtractor(BaseFeatureExtractor):
                  layer_count: int = 2
                  ) -> None:
         super().__init__(state_dim=state_dim, 
-                         feature_dim=feature_dim, 
-                         name='MLP')
+                         feature_dim=feature_dim)
 
         layers = []
         layers.append(nn.Linear(state_dim, feature_dim)) # input layer
@@ -23,8 +22,13 @@ class MLPExtractor(BaseFeatureExtractor):
 
     def forward(self, state: torch.Tensor, rgbd = None) -> torch.Tensor:
         return self.mlp(state)
+    
+    @classmethod
+    def get_name(self):
+        return 'MLP'
 
 if __name__ == '__main__':
+    print(MLPExtractor.get_name())
     mlp = MLPExtractor(state_dim=10, feature_dim=256)
     print(mlp)
     print(mlp(torch.randn(5, 10)).shape)

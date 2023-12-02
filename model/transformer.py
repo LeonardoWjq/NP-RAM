@@ -46,8 +46,7 @@ class TransformerExtractor(BaseFeatureExtractor):
                  num_heads=8,
                  layer_count=3):
         super(TransformerExtractor, self).__init__(state_dim=state_dim,
-                                                   feature_dim=feature_dim,
-                                                   name='Transformer')
+                                                   feature_dim=feature_dim)
 
         self.d_model = d_model
 
@@ -79,6 +78,10 @@ class TransformerExtractor(BaseFeatureExtractor):
         feature = self.flatten(state)
         return self.linear(feature)
 
+    @classmethod
+    def get_name(self):
+        return 'Transformer'
+
 if __name__ == '__main__':
     model = TransformerExtractor(state_dim=42)
     print(model)
@@ -86,3 +89,4 @@ if __name__ == '__main__':
     image = torch.randn(10, 8, 128, 128)
     out = model(state, image)
     print(out.shape)
+    print(TransformerExtractor.get_name())

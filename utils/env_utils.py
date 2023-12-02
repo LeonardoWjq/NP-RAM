@@ -2,13 +2,13 @@ from gymnasium.spaces import Box, Dict
 import numpy as np
 
 
-def get_state_len(obs_space):
-    if isinstance(obs_space, Box):
-        return obs_space.shape[0]
-    elif isinstance(obs_space, Dict) or isinstance(obs_space, dict):
+def get_space_len(space):
+    if isinstance(space, Box):
+        return space.shape[0]
+    elif isinstance(space, Dict) or isinstance(space, dict):
         ls = []
-        for key, value in obs_space.items():
-            ls.append(get_state_len(value))
+        for key, value in space.items():
+            ls.append(get_space_len(value))
         return np.sum(ls)
     else:
-        raise ValueError(f'obs is of type {type(obs_space)}')
+        raise ValueError(f'space is of type {type(space)}')

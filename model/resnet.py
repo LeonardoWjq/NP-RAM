@@ -82,8 +82,7 @@ class ResNetExtractor(BaseFeatureExtractor):
                  state_embedding: int = 64
                  ) -> None:
         super().__init__(state_dim=state_dim,
-                         feature_dim=image_embedding + state_embedding,
-                         name='ResNet')
+                         feature_dim=image_embedding + state_embedding)
         self._resnet = ResNet(in_channels, mid_channels, out_channels)
         self._image_linear = nn.Linear(32*32*out_channels, image_embedding)
         self._state_linear = nn.Linear(state_dim, state_embedding)
@@ -98,6 +97,10 @@ class ResNetExtractor(BaseFeatureExtractor):
 
         feature = torch.cat([state_feature, rgbd_feature], dim=1)
         return feature
+    
+    @classmethod
+    def get_name(self) -> str:
+        return 'ResNet'
 
 if __name__ == '__main__':
     resnet = ResNetExtractor(state_dim=42)

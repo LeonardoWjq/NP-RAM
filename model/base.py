@@ -7,14 +7,13 @@ import torch.nn as nn
 class BaseFeatureExtractor(ABC, nn.Module):
     def __init__(self,
                  state_dim: int,
-                 feature_dim: int,
-                 name: str) -> None:
+                 feature_dim: int) -> None:
         super().__init__()
-        self.name = name
         self.feature_dim = feature_dim
 
+    @classmethod
     def get_name(self):
-        return self.name
+        return 'Base'
     
     def get_feature_dim(self) -> int:
         return self.feature_dim
