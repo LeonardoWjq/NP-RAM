@@ -6,7 +6,7 @@ import numpy as np
 import torch
 from imitation.rewards.reward_nets import BasicShapedRewardNet
 from imitation.util.networks import RunningNorm
-from stable_baselines3 import SAC
+from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import CheckpointCallback, EvalCallback
 from stable_baselines3.common.evaluation import evaluate_policy
 from stable_baselines3.common.utils import set_random_seed
@@ -19,7 +19,7 @@ env_id = "LiftCube-v0"
 obs_mode = "state"
 control_mode = "pd_ee_delta_pose"
 reward_mode = "normalized_dense"
-device = torch.device('cuda:1' if torch.cuda.is_available() else 'cpu')
+device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
 
 def train(seed: int = 0,
@@ -28,21 +28,20 @@ def train(seed: int = 0,
           total_steps: int = 640_000,
           train_episode_horizon: int = 50,
           policy_kwargs: dict = None,
+          rollout_steps: int = 3_200,
           batch_size: int = 400,
-          buffer_size: int = 40_000,
+          n_epochs: int = 15,
           gamma: float = 0.85,
-          gradient_steps: int = 5,
-          train_freq: int = 20,
-          target_update_interval: int = 100,
+          target_kl: float = 0.05,
+          clip_range: float = 0.2,
           use_sde: bool = False,
-          use_sde_at_warmup: bool = True,
           eval_frequency: int = 32_000,
           n_eval_episodes: int = 5,
           ckpt_frequency: int = 32_000,
           continue_training: bool = False):
 
     log_path = make_path('logs',
-                         f'SAC-Bonus-{env_id}-{obs_mode}-{control_mode}',
+                         f'PPO-Bonus-{env_id}-{obs_mode}-{control_mode}',
                          f'seed-{seed}')
     ckpt_path = os.path.join(log_path, 'checkpoints')
     tb_path = os.path.join(log_path, 'tensorboard')
@@ -56,7 +55,8 @@ def train(seed: int = 0,
                             control_mode=control_mode,
                             save_video=True,
                             max_episode_steps=200,
-                            record_dir=eval_path)
+                            record_dir=eval_path,
+                            device=device)
 
     reward_net = BasicShapedRewardNet(observation_space=eval_env.observation_space,
                                       action_space=eval_env.action_space,
@@ -88,30 +88,30 @@ def train(seed: int = 0,
 
     checkpoint_callback = CheckpointCallback(save_freq=ckpt_frequency,
                                              save_path=ckpt_path,
-                                             name_prefix="sac_model",
+                                             name_prefix="ppo_model",
                                              save_replay_buffer=True,
                                              save_vecnormalize=True,
                                              verbose=2)
     set_random_seed(seed)
 
     if continue_training:
-        model = SAC.load(os.path.join(ckpt_path, 'latest_model'))
+        model = PPO.load(os.path.join(ckpt_path, 'latest_model'))
     else:
-        model = SAC(policy='MlpPolicy',
-                    env=train_env,
+        model = PPO("MlpPolicy",
+                    train_env,
                     policy_kwargs=policy_kwargs,
+                    verbose=1,
+                    n_steps=rollout_steps // num_envs,
                     batch_size=batch_size,
-                    buffer_size=buffer_size,
-                    gamma=gamma,
-                    gradient_steps=gradient_steps,
-                    train_freq=train_freq,
-                    target_update_interval=target_update_interval,
-                    use_sde=use_sde,
-                    use_sde_at_warmup=use_sde_at_warmup,
+                    n_epochs=n_epochs,
                     tensorboard_log=tb_path,
-                    device=device,
-                    verbose=1)
-        
+                    gamma=gamma,
+                    target_kl=target_kl,
+                    clip_range=clip_range,
+                    use_sde=use_sde,
+                    device=device)
+
+    print(model.policy)
     model.learn(total_timesteps=total_steps,
                 callback=[eval_callback, checkpoint_callback],
                 reset_num_timesteps=False)
@@ -127,7 +127,7 @@ def test(seed: int = 1,
          evaluate_episodes: int = 50):
 
     log_path = make_path('logs',
-                         f'SAC-Bonus-{env_id}-{obs_mode}-{control_mode}',
+                         f'PPO-Bonus-{env_id}-{obs_mode}-{control_mode}',
                          f'seed-{seed}')
 
     test_path = os.path.join(log_path, 'test')
@@ -147,11 +147,11 @@ def test(seed: int = 1,
         best_model_path = os.path.join(log_path,
                                        'best_model',
                                        'best_model.zip')
-        model = SAC.load(path=best_model_path,
+        model = PPO.load(path=best_model_path,
                          env=test_env,
                          device=device)
     else:
-        model = SAC.load(path=model_path,
+        model = PPO.load(path=model_path,
                          env=test_env,
                          device=device)
 
@@ -174,19 +174,22 @@ def test(seed: int = 1,
 
 
 if __name__ == '__main__':
-    policy_kwargs = dict(net_arch=[256, 256])
+
+    policy_kwargs = dict(squash_output=True,
+                         net_arch=[256, 256])
     seeds = [3, 9, 7, 12, 4]
     for seed in seeds:
         reward_net_path = os.path.join('logs',
-                                       f'GAIL-SAC-{env_id}-{obs_mode}-{control_mode}',
+                                       f'GAIL-PPO-{env_id}-{obs_mode}-{control_mode}',
                                        f'seed-{seed}',
                                        'checkpoints',
                                        'reward_net_latest.pt')
-
+        
         reward_net_state_dict = torch.load(reward_net_path)
 
         train(seed=seed,
               reward_net_state_dict=reward_net_state_dict,
+              total_steps=1_280_000,
               policy_kwargs=policy_kwargs)
         
         test(seed=seed)

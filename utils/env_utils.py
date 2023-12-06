@@ -1,5 +1,8 @@
+from typing import Union
+
 import gymnasium as gym
 import numpy as np
+import torch
 from gymnasium.spaces import Box, Dict
 from imitation.rewards.reward_nets import RewardNet
 from mani_skill2.utils.wrappers import RecordEpisode
@@ -27,7 +30,9 @@ def make_env(env_id: str,
              save_video: bool = False,
              max_episode_steps: int = None,
              record_dir: str = None,
-             reward_net: RewardNet = None):
+             reward_net: RewardNet = None,
+             reward_coeff: float = 0.01,
+             device: Union[str, torch.device] = 'cuda'):
 
     def _init() -> gym.Env:
         env = gym.make(env_id,
@@ -50,7 +55,10 @@ def make_env(env_id: str,
             )
 
         if reward_net is not None:
-            env = RewardBonusWrapper(env, reward_net)
+            env = RewardBonusWrapper(env,
+                                     reward_net,
+                                     device,
+                                     reward_coeff)
         return env
 
     return _init
@@ -64,7 +72,9 @@ def make_vec_env(env_id,
                  save_video=False,
                  max_episode_steps=None,
                  record_dir=None,
-                 reward_net=None):
+                 reward_net=None,
+                 reward_coeff=0.01,
+                 device='cuda'):
 
     venv = DummyVecEnv([make_env(env_id,
                                  obs_mode,
@@ -73,8 +83,10 @@ def make_vec_env(env_id,
                                  save_video,
                                  max_episode_steps,
                                  record_dir,
-                                 reward_net) for _ in range(num_envs)])
+                                 reward_net,
+                                 reward_coeff,
+                                 device) for _ in range(num_envs)])
     venv = VecMonitor(venv)
     venv.reset()
-    
+
     return venv
